@@ -1,5 +1,6 @@
 #!/bin/sh
 
-export LDPRELOAD=$SNAP/lib/snapcraft-preload.so
+export SNAPCRAFT_PRELOAD=$SNAP
+export LD_PRELOAD=$SNAP/lib/libsnapcraft-preload.so
 
 exec "$@"
