@@ -17,7 +17,3 @@ apps:
     app-name:
         command: preload <binary>
 ```
-
-# TODO
-
-- Create a `snapcraft.yaml` and add as a remote part
