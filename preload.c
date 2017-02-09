@@ -172,8 +172,6 @@ redirect_path_full (const char *pathname, int check_parent, int only_if_absolute
         return redirected_pathname;
     }
 
-    redirected_pathname = malloc (PATH_MAX);
-
     if (preload_dir[strlen (preload_dir) - 1] == '/') {
         chop = 1;
     }
