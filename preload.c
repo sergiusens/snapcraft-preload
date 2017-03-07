@@ -147,8 +147,6 @@ redirect_path_full (const char *pathname, int check_parent, int only_if_absolute
 {
     int (*_access) (const char *pathname, int mode);
     char *redirected_pathname;
-    char *preload_dir;
-    size_t preload_dir_len;
     int ret;
     int chop = 0;
     char *slash = 0;
@@ -157,8 +155,8 @@ redirect_path_full (const char *pathname, int check_parent, int only_if_absolute
         return NULL;
     }
 
-    preload_dir = saved_snapcraft_preload;
-    preload_dir_len = saved_snapcraft_preload_len;
+    const char *preload_dir = saved_snapcraft_preload;
+    const size_t preload_dir_len = saved_snapcraft_preload_len;
 
     if (preload_dir == NULL) {
         return strdup (pathname);
