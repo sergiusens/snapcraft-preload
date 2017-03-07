@@ -37,8 +37,11 @@
 #define SNAPCRAFT_LIBNAME "snapcraft-preload.so"
 #endif
 
+#define STATIC_STRLEN(s) (sizeof (s) - 1)
 #define LD_PRELOAD "LD_PRELOAD"
+#define LD_PRELOAD_LEN STATIC_STRLEN (LD_PRELOAD)
 #define SNAPCRAFT_PRELOAD "SNAPCRAFT_PRELOAD"
+
 static char **saved_ld_preloads = NULL;
 static size_t num_saved_ld_preloads = 0;
 static char *saved_snapcraft_preload = NULL;
@@ -102,7 +105,7 @@ void constructor()
     // Pull out each absolute-pathed libsnapcraft-preload.so we find.  Better to
     // accidentally include some other libsnapcraft-preload than not propagate
     // ourselves.
-    libnamelen = sizeof (SNAPCRAFT_LIBNAME) - 1;
+    libnamelen = STATIC_STRLEN (SNAPCRAFT_LIBNAME);
     for (p = strtok_r (ld_preload_copy, " :", &savedptr);
          p;
          p = strtok_r (NULL, " :", &savedptr)) {
@@ -202,7 +205,7 @@ redirect_path_full (const char *pathname, int check_parent, int only_if_absolute
             free (redirected_pathname);
             return strdup (pathname);
         }
-        strncat (redirected_pathname, "/", PATH_MAX - 1 - strlen (redirected_pathname));
+        strncat (redirected_pathname, "/", PATH_MAX - 1 - cursize);
     }
 
     strncat (redirected_pathname, pathname, PATH_MAX - 1 - strlen (redirected_pathname));
@@ -579,7 +582,7 @@ ensure_in_ld_preload (char *ld_preload, const char *to_be_added)
 
         // Check if we are already in LD_PRELOAD and thus can bail
         ld_preload_copy = strdup (ld_preload);
-        for (p = strtok_r (ld_preload_copy + strlen (LD_PRELOAD) + 1, " :", &savedptr);
+        for (p = strtok_r (ld_preload_copy + LD_PRELOAD_LEN + 1, " :", &savedptr);
              p;
              p = strtok_r (NULL, " :", &savedptr)) {
             if (strcmp (p, to_be_added) == 0) {
@@ -595,8 +598,8 @@ ensure_in_ld_preload (char *ld_preload, const char *to_be_added)
             strcat (ld_preload, to_be_added);
         }
     } else {
-        ld_preload = realloc (ld_preload, strlen (to_be_added) + strlen (LD_PRELOAD) + 2);
-        strcpy (ld_preload, LD_PRELOAD "=");
+        ld_preload = realloc (ld_preload, strlen (to_be_added) + LD_PRELOAD_LEN + 2);
+        strncpy (ld_preload, LD_PRELOAD "=", LD_PRELOAD_LEN + 1);
         strcat (ld_preload, to_be_added);
     }
 
@@ -619,7 +622,7 @@ execve_copy_envp (char *const envp[])
 
     for (i = 0; i < num_elements; i++) {
         new_envp[i] = strdup (envp[i]);
-        if (strncmp (envp[i], LD_PRELOAD "=", strlen (LD_PRELOAD) + 1) == 0) {
+        if (strncmp (envp[i], LD_PRELOAD "=", LD_PRELOAD_LEN + 1) == 0) {
             ld_preload = new_envp[i]; // point at last defined LD_PRELOAD
         }
     }
@@ -635,9 +638,9 @@ execve_copy_envp (char *const envp[])
     }
 
     if (saved_snapcraft_preload) {
-        snapcraft_preload = malloc (saved_snapcraft_preload_len + strlen (SNAPCRAFT_PRELOAD) + 2);
-        strcpy (snapcraft_preload, SNAPCRAFT_PRELOAD "=");
-        strcat (snapcraft_preload, saved_snapcraft_preload);
+        snapcraft_preload = malloc (saved_snapcraft_preload_len + STATIC_STRLEN (SNAPCRAFT_PRELOAD) + 2);
+        strncpy (snapcraft_preload, SNAPCRAFT_PRELOAD "=", STATIC_STRLEN (SNAPCRAFT_PRELOAD) + 1);
+        strncat (snapcraft_preload, saved_snapcraft_preload, saved_snapcraft_preload_len);
         new_envp[i++] = snapcraft_preload;
     }
 
