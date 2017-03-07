@@ -476,14 +476,11 @@ scandirat (int dirfd, const char *dirp, struct dirent ***namelist, int (*filter)
     return ret;
 }
 
-int
-bind (int sockfd, const struct sockaddr *addr, socklen_t addrlen)
+static int
+socket_action (int (*func) (int sockfd, const struct sockaddr *addr, socklen_t addrlen), int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 {
-    int (*_bind) (int sockfd, const struct sockaddr *addr, socklen_t addrlen);
     int use_native = 1;
     int result;
-
-    _bind = (int (*)(int sockfd, const struct sockaddr *addr, socklen_t addrlen)) dlsym (RTLD_NEXT, "bind");
 
     if (addr->sa_family == AF_UNIX) {
         const struct sockaddr_un *un_addr = (const struct sockaddr_un *)addr;
@@ -497,7 +494,7 @@ bind (int sockfd, const struct sockaddr *addr, socklen_t addrlen)
                 strcpy (new_addr.sun_path, new_path);
 
                 use_native = 0;
-                result = _bind (sockfd, (const struct sockaddr *)&new_addr, sizeof(new_addr));
+                result = func (sockfd, (const struct sockaddr *)&new_addr, sizeof(new_addr));
             }
 
             free (new_path);
@@ -505,45 +502,28 @@ bind (int sockfd, const struct sockaddr *addr, socklen_t addrlen)
     }
 
     if (use_native) {
-        result = _bind (sockfd, addr, addrlen);
+        result = func (sockfd, addr, addrlen);
     }
 
     return result;
 }
 
 int
+bind (int sockfd, const struct sockaddr *addr, socklen_t addrlen)
+{
+    int (*_bind) (int sockfd, const struct sockaddr *addr, socklen_t addrlen);
+
+    _bind = (int (*)(int sockfd, const struct sockaddr *addr, socklen_t addrlen)) dlsym (RTLD_NEXT, "bind");
+    return socket_action (_bind, sockfd, addr, addrlen);
+}
+
+int
 connect (int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 {
     int (*_connect) (int sockfd, const struct sockaddr *addr, socklen_t addrlen);
-    int use_native = 1;
-    int result;
 
     _connect = (int (*)(int sockfd, const struct sockaddr *addr, socklen_t addrlen)) dlsym (RTLD_NEXT, "connect");
-
-    if (addr->sa_family == AF_UNIX) {
-        const struct sockaddr_un *un_addr = (const struct sockaddr_un *)addr;
-
-        if (un_addr->sun_path[0] != '\0') {
-            char *new_path = redirect_path (un_addr->sun_path);
-
-            if (strcmp (un_addr->sun_path, new_path) != 0) {
-                struct sockaddr_un new_addr = {0};
-                new_addr.sun_family = AF_UNIX;
-                strcpy (new_addr.sun_path, new_path);
-
-                use_native = 0;
-                result = _connect (sockfd, (const struct sockaddr *)&new_addr, sizeof(new_addr));
-            }
-
-            free (new_path);
-        }
-    }
-
-    if (use_native) {
-        result = _connect (sockfd, addr, addrlen);
-    }
-
-    return result;
+    return socket_action (_connect, sockfd, addr, addrlen);
 }
 
 void *
