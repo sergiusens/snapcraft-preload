@@ -42,21 +42,35 @@
 static char **saved_ld_preloads = NULL;
 static size_t num_saved_ld_preloads = 0;
 static char *saved_snapcraft_preload = NULL;
+static size_t saved_snapcraft_preload_len = 0;
 static char *saved_varlib = NULL;
+static size_t saved_varlib_len = 0;
 static char *saved_snap_name = NULL;
+static size_t saved_snap_name_len = 0;
 static char *saved_snap_revision = NULL;
+static size_t saved_snap_revision_len = 0;
 static char saved_snap_devshm[NAME_MAX];
 
 static void constructor() __attribute__((constructor));
 
 static char *
-getenvdup (const char *varname)
+getenvdup (const char *varname, size_t *envlen)
 {
     char *envvar = secure_getenv (varname);
-    if (envvar == NULL || envvar[0] == 0) // identical for our purposes
+    if (envvar == NULL || envvar[0] == 0) { // identical for our purposes
+        if (envlen) {
+            *envlen = 0;
+        }
         return NULL;
-    else
+    }
+    else {
+        if (envlen) {
+            *envlen = strlen (envvar);
+            return strndup (envvar, *envlen);
+        }
+
         return strdup (envvar);
+    }
 }
 
 void constructor()
@@ -66,20 +80,20 @@ void constructor()
 
     // We need to save LD_PRELOAD and SNAPCRAFT_PRELOAD in case we need to
     // propagate the values to an exec'd program.
-    ld_preload_copy = getenvdup (LD_PRELOAD);
+    ld_preload_copy = getenvdup (LD_PRELOAD, NULL);
     if (ld_preload_copy == NULL) {
         return;
     }
 
-    saved_snapcraft_preload = getenvdup (SNAPCRAFT_PRELOAD);
+    saved_snapcraft_preload = getenvdup (SNAPCRAFT_PRELOAD, &saved_snapcraft_preload_len);
     if (saved_snapcraft_preload == NULL) {
         free (ld_preload_copy);
         return;
     }
 
-    saved_varlib = getenvdup ("SNAP_DATA");
-    saved_snap_name = getenvdup ("SNAP_NAME");
-    saved_snap_revision = getenvdup ("SNAP_REVISION");
+    saved_varlib = getenvdup ("SNAP_DATA", &saved_varlib_len);
+    saved_snap_name = getenvdup ("SNAP_NAME", &saved_snap_name_len);
+    saved_snap_revision = getenvdup ("SNAP_REVISION", &saved_snap_revision_len);
 
     if (snprintf(saved_snap_devshm, sizeof saved_snap_devshm, "/dev/shm/snap.%s", saved_snap_name) < 0){
         perror("cannot construct path /dev/shm/snap.$SNAP_NAME");
@@ -131,6 +145,7 @@ redirect_path_full (const char *pathname, int check_parent, int only_if_absolute
     int (*_access) (const char *pathname, int mode);
     char *redirected_pathname;
     char *preload_dir;
+    size_t preload_dir_len;
     int ret;
     int chop = 0;
     char *slash = 0;
@@ -140,6 +155,8 @@ redirect_path_full (const char *pathname, int check_parent, int only_if_absolute
     }
 
     preload_dir = saved_snapcraft_preload;
+    preload_dir_len = saved_snapcraft_preload_len;
+
     if (preload_dir == NULL) {
         return strdup (pathname);
     }
@@ -155,7 +172,7 @@ redirect_path_full (const char *pathname, int check_parent, int only_if_absolute
     // play in /var/lib themselves.  So we reverse the normal check: first see if
     // it exists in root, else do our redirection.
     if (strcmp (pathname, "/var/lib") == 0 || strncmp (pathname, "/var/lib/", 9) == 0) {
-        if (saved_varlib && strncmp (pathname, saved_varlib, strlen (saved_varlib)) != 0 && _access (pathname, F_OK) != 0) {
+        if (saved_varlib && strncmp (pathname, saved_varlib, saved_varlib_len) != 0 && _access (pathname, F_OK) != 0) {
             return redirect_writable_path (pathname + 8, saved_varlib);
         } else {
             return strdup (pathname);
@@ -174,7 +191,7 @@ redirect_path_full (const char *pathname, int check_parent, int only_if_absolute
 
     redirected_pathname = malloc (PATH_MAX);
 
-    if (preload_dir[strlen (preload_dir) - 1] == '/') {
+    if (preload_dir[preload_dir_len - 1] == '/') {
         chop = 1;
     }
     strncpy (redirected_pathname, preload_dir, PATH_MAX - 1 - chop);
@@ -618,7 +635,7 @@ execve_copy_envp (char *const envp[])
     }
 
     if (saved_snapcraft_preload) {
-        snapcraft_preload = malloc (strlen (saved_snapcraft_preload) + strlen (SNAPCRAFT_PRELOAD) + 2);
+        snapcraft_preload = malloc (saved_snapcraft_preload_len + strlen (SNAPCRAFT_PRELOAD) + 2);
         strcpy (snapcraft_preload, SNAPCRAFT_PRELOAD "=");
         strcat (snapcraft_preload, saved_snapcraft_preload);
         new_envp[i++] = snapcraft_preload;
