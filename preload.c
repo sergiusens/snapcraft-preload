@@ -477,34 +477,33 @@ scandirat (int dirfd, const char *dirp, struct dirent ***namelist, int (*filter)
 }
 
 static int
-socket_action (int (*func) (int sockfd, const struct sockaddr *addr, socklen_t addrlen), int sockfd, const struct sockaddr *addr, socklen_t addrlen)
+socket_action (int (*action) (int sockfd, const struct sockaddr *addr, socklen_t addrlen), int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 {
-    int use_native = 1;
-    int result;
+    const struct sockaddr_un *un_addr = (const struct sockaddr_un *)addr;
 
-    if (addr->sa_family == AF_UNIX) {
-        const struct sockaddr_un *un_addr = (const struct sockaddr_un *)addr;
-
-        if (un_addr->sun_path[0] != '\0') {
-            char *new_path = redirect_path (un_addr->sun_path);
-
-            if (strcmp (un_addr->sun_path, new_path) != 0) {
-                struct sockaddr_un new_addr = {0};
-                new_addr.sun_family = AF_UNIX;
-                strcpy (new_addr.sun_path, new_path);
-
-                use_native = 0;
-                result = func (sockfd, (const struct sockaddr *)&new_addr, sizeof(new_addr));
-            }
-
-            free (new_path);
-        }
+    if (addr->sa_family != AF_UNIX) {
+        // Non-unix sockets
+        return action (sockfd, addr, addrlen);
     }
 
-    if (use_native) {
-        result = func (sockfd, addr, addrlen);
+    if (un_addr->sun_path[0] == '\0') {
+        // Abstract sockets
+        return action (sockfd, addr, addrlen);
     }
 
+    int result = 0;
+    char *new_path = redirect_path (un_addr->sun_path);
+
+    if (strcmp (un_addr->sun_path, new_path) == 0) {
+        result = action (sockfd, addr, addrlen);
+    } else {
+        struct sockaddr_un new_addr = {0};
+        new_addr.sun_family = AF_UNIX;
+        strcpy (new_addr.sun_path, new_path);
+        result = action (sockfd, (const struct sockaddr *)&new_addr, sizeof(new_addr));
+    }
+
+    free (new_path);
     return result;
 }
 
