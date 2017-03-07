@@ -496,12 +496,12 @@ socket_action (int (*action) (int sockfd, const struct sockaddr *addr, socklen_t
     int result = 0;
     char *new_path = redirect_path (un_addr->sun_path);
 
-    if (strcmp (un_addr->sun_path, new_path) == 0) {
+    if (strncmp (un_addr->sun_path, new_path, sizeof (un_addr->sun_path)) == 0) {
         result = action (sockfd, addr, addrlen);
     } else {
         struct sockaddr_un new_addr = {0};
         new_addr.sun_family = AF_UNIX;
-        strcpy (new_addr.sun_path, new_path);
+        strncpy (new_addr.sun_path, new_path, sizeof (new_addr.sun_path));
         result = action (sockfd, (const struct sockaddr *)&new_addr, sizeof(new_addr));
     }
 
