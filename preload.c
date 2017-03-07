@@ -88,12 +88,12 @@ void constructor()
     // Pull out each absolute-pathed libsnapcraft-preload.so we find.  Better to
     // accidentally include some other libsnapcraft-preload than not propagate
     // ourselves.
-    libnamelen = strlen(SNAPCRAFT_LIBNAME);
+    libnamelen = strlen (SNAPCRAFT_LIBNAME);
     for (p = strtok_r (ld_preload_copy, " :", &savedptr);
          p;
          p = strtok_r (NULL, " :", &savedptr)) {
         size_t plen = strlen (p);
-        if (plen > libnamelen && p[0] == '/' && strcmp (p + strlen (p) - strlen (SNAPCRAFT_LIBNAME) - 1, "/" SNAPCRAFT_LIBNAME) == 0) {
+        if (plen > libnamelen && p[0] == '/' && strcmp (p + plen - libnamelen - 1, "/" SNAPCRAFT_LIBNAME) == 0) {
             num_saved_ld_preloads++;
             saved_ld_preloads = realloc (saved_ld_preloads, (num_saved_ld_preloads + 1) * sizeof (char *));
             saved_ld_preloads[num_saved_ld_preloads - 1] = strdup (p);
