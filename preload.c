@@ -37,9 +37,9 @@
 #define SNAPCRAFT_LIBNAME "snapcraft-preload.so"
 #endif
 
-#define STATIC_STRLEN(s) (sizeof (s) - 1)
+#define LITERAL_STRLEN(s) (sizeof (s) - 1)
 #define LD_PRELOAD "LD_PRELOAD"
-#define LD_PRELOAD_LEN STATIC_STRLEN (LD_PRELOAD)
+#define LD_PRELOAD_LEN LITERAL_STRLEN (LD_PRELOAD)
 #define SNAPCRAFT_PRELOAD "SNAPCRAFT_PRELOAD"
 
 static char **saved_ld_preloads = NULL;
@@ -105,7 +105,7 @@ void constructor()
     // Pull out each absolute-pathed libsnapcraft-preload.so we find.  Better to
     // accidentally include some other libsnapcraft-preload than not propagate
     // ourselves.
-    libnamelen = STATIC_STRLEN (SNAPCRAFT_LIBNAME);
+    libnamelen = LITERAL_STRLEN (SNAPCRAFT_LIBNAME);
     for (p = strtok_r (ld_preload_copy, " :", &savedptr);
          p;
          p = strtok_r (NULL, " :", &savedptr)) {
@@ -636,8 +636,8 @@ execve_copy_envp (char *const envp[])
     }
 
     if (saved_snapcraft_preload) {
-        snapcraft_preload = malloc (saved_snapcraft_preload_len + STATIC_STRLEN (SNAPCRAFT_PRELOAD) + 2);
-        strncpy (snapcraft_preload, SNAPCRAFT_PRELOAD "=", STATIC_STRLEN (SNAPCRAFT_PRELOAD) + 1);
+        snapcraft_preload = malloc (saved_snapcraft_preload_len + LITERAL_STRLEN (SNAPCRAFT_PRELOAD) + 2);
+        strncpy (snapcraft_preload, SNAPCRAFT_PRELOAD "=", LITERAL_STRLEN (SNAPCRAFT_PRELOAD) + 1);
         strncat (snapcraft_preload, saved_snapcraft_preload, saved_snapcraft_preload_len);
         new_envp[i++] = snapcraft_preload;
     }
