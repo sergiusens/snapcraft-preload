@@ -16,16 +16,20 @@
 
 cmake_minimum_required(VERSION 3.2)
 
-add_library(snapcraft-preload SHARED preload.c)
+set(LIBNAME "libsnapcraft-preload")
+add_library(snapcraft-preload SHARED preload.cpp)
+
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+
 set_target_properties(snapcraft-preload PROPERTIES
-                      COMPILE_FLAGS "-DSNAPCRAFT_LIBNAME=\\\"libsnapcraft-preload.so\\\"")
+                      COMPILE_FLAGS "-DSNAPCRAFT_LIBNAME=\\\"${LIBNAME}.so\\\"")
 target_link_libraries(snapcraft-preload -ldl)
 
 execute_process(COMMAND uname -m COMMAND tr -d '\n' OUTPUT_VARIABLE ARCHITECTURE)
 if(${ARCHITECTURE} STREQUAL "x86_64")
-    add_library(snapcraft-preload32 SHARED preload.c)
+    add_library(snapcraft-preload32 SHARED preload.cpp)
     set_target_properties(snapcraft-preload32 PROPERTIES
-                          COMPILE_FLAGS "-DSNAPCRAFT_LIBNAME=\\\"libsnapcraft-preload32.so\\\" -m32")
+                          COMPILE_FLAGS "-DSNAPCRAFT_LIBNAME=\\\"${LIBNAME}32.so\\\" -m32")
     target_link_libraries(snapcraft-preload32 -ldl -m32)
 endif()
 
