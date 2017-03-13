@@ -145,7 +145,7 @@ redirect_writable_path (const char *pathname, const char *basepath)
         return strdup (basepath);
     }
 
-    size_t basepath_len = MIN (strlen (basepath), PATH_MAX - 1);
+    size_t basepath_len = MIN (strlen (basepath), PATH_MAX);
     redirected_pathname = static_cast<char *> (malloc (PATH_MAX));
 
     if (basepath[basepath_len - 1] == '/') {
@@ -393,6 +393,8 @@ int NAME (const char *path, int flags, ...) { va_list va; va_start(va, flags); i
 DECLARE_REDIRECT(NAME) \
 int NAME (int dirfp, const char *path, int flags, ...) { va_list va; va_start(va, flags); int ret = redirect_open<int, _ ## NAME ## _preload, ABSOLUTE_REDIRECT, 1, int, const char *, int>(dirfp, path, flags, va_separator(), va); va_end(va); return ret; }
 
+extern "C"
+{
 REDIRECT_1_2(FILE *, fopen, const char *)
 REDIRECT_1_1(int, unlink)
 REDIRECT_2_3_AT(int, unlinkat, int, int)
@@ -437,17 +439,39 @@ REDIRECT_OPEN(open64)
 REDIRECT_OPEN_AT(openat)
 REDIRECT_OPEN_AT(openat64)
 REDIRECT_2_3(int, inotify_add_watch, int, uint32_t)
-REDIRECT_1_4(int, scandir, struct dirent ***, filter_function_t<struct dirent>, compar_function_t<struct dirent>);
-REDIRECT_1_4(int, scandir64, struct dirent64 ***, filter_function_t<struct dirent64>, compar_function_t<struct dirent64>);
-REDIRECT_2_5_AT(int, scandirat, int, struct dirent ***, filter_function_t<struct dirent>, compar_function_t<struct dirent>);
-REDIRECT_2_5_AT(int, scandirat64, int, struct dirent64 ***, filter_function_t<struct dirent64>, compar_function_t<struct dirent64>);
-
-// non-absolute library paths aren't simply relative paths, they need
-// a whole lookup algorithm
-REDIRECT_1_2_AT(void *, dlopen, int);
 }
 
-using socket_action_t = int (*) (int, const struct sockaddr *, socklen_t);
+extern "C" int
+scandir (const char *dirp, struct dirent ***namelist, int (*filter)(const struct dirent *), int (*compar)(const struct dirent **, const struct dirent **))
+{
+    int (*_scandir) (const char *dirp, struct dirent ***namelist, int (*filter)(const struct dirent *), int (*compar)(const struct dirent **, const struct dirent **));
+    char *new_path = NULL;
+    int ret;
+
+    _scandir = (int (*)(const char *dirp, struct dirent ***namelist, int (*filter)(const struct dirent *), int (*compar)(const struct dirent **, const struct dirent **))) dlsym (RTLD_NEXT, "scandir");
+
+    new_path = redirect_path (dirp);
+    ret = _scandir (new_path, namelist, filter, compar);
+    free (new_path);
+
+    return ret;
+}
+
+extern "C" int
+scandirat (int dirfd, const char *dirp, struct dirent ***namelist, int (*filter)(const struct dirent *), int (*compar)(const struct dirent **, const struct dirent **))
+{
+    int (*_scandirat) (int dirfd, const char *dirp, struct dirent ***namelist, int (*filter)(const struct dirent *), int (*compar)(const struct dirent **, const struct dirent **));
+    char *new_path = NULL;
+    int ret;
+
+    _scandirat = (int (*)(int dirfd, const char *dirp, struct dirent ***namelist, int (*filter)(const struct dirent *), int (*compar)(const struct dirent **, const struct dirent **))) dlsym (RTLD_NEXT, "scandirat");
+
+    new_path = redirect_path_if_absolute (dirp);
+    ret = _scandirat (dirfd, new_path, namelist, filter, compar);
+    free (new_path);
+
+    return ret;
+}
 
 static int
 socket_action (socket_action_t action, int sockfd, const struct sockaddr *addr, socklen_t addrlen)
@@ -498,6 +522,28 @@ connect (int sockfd, const struct sockaddr *addr, socklen_t addrlen)
         (decltype(_connect)) dlsym (RTLD_NEXT, "connect");
 
     return socket_action (_connect, sockfd, addr, addrlen);
+}
+
+extern "C" void *
+dlopen (const char *path, int mode)
+{
+    void *(*_dlopen) (const char *path, int mode);
+    char *new_path = NULL;
+    void *result;
+
+    _dlopen = (void *(*)(const char *path, int mode)) dlsym (RTLD_NEXT, "dlopen");
+
+    if (path && path[0] == '/') {
+        new_path = redirect_path (path);
+        result = _dlopen (new_path, mode);
+        free (new_path);
+    } else {
+        // non-absolute library paths aren't simply relative paths, they need
+        // a whole lookup algorithm
+        result = _dlopen (path, mode);
+    }
+
+    return result;
 }
 
 static char *
