@@ -31,4 +31,3 @@ endif()
 
 install(TARGETS snapcraft-preload LIBRARY DESTINATION lib)
 install(PROGRAMS snapcraft-preload DESTINATION bin)
-install(PROGRAMS preload DESTINATION bin)
