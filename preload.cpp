@@ -329,6 +329,10 @@ RET NAME (const char *path) { return redirect_n<RET, NAME ## _preload, NORMAL_RE
 constexpr const char NAME ## _preload[] = #NAME; \
 RET NAME (const char *path, T2 a2) { return redirect_n<RET, NAME ## _preload, NORMAL_REDIRECT, 0, const char *, T2>(path, a2); }
 
+#define REDIRECT_1_2_AT(RET, NAME, T2) \
+constexpr const char NAME ## _preload[] = #NAME; \
+RET NAME (const char *path, T2 a2) { return redirect_n<RET, NAME ## _preload, ABSOLUTE_REDIRECT, 0, const char *, T2>(path, a2); }
+
 #define REDIRECT_1_3(RET, NAME, T2, T3) \
 constexpr const char NAME ## _preload[] = #NAME; \
 RET NAME (const char *path, T2 a2, T3 a3) { return redirect_n<RET, NAME ## _preload, NORMAL_REDIRECT, 0, const char *, T2, T3>(path, a2, a3); }
@@ -421,6 +425,10 @@ REDIRECT_1_4(int, scandir, struct dirent ***, filter_function_t<struct dirent>, 
 REDIRECT_1_4(int, scandir64, struct dirent64 ***, filter_function_t<struct dirent64>, compar_function_t<struct dirent64>);
 REDIRECT_2_5_AT(int, scandirat, int, struct dirent ***, filter_function_t<struct dirent>, compar_function_t<struct dirent>);
 REDIRECT_2_5_AT(int, scandirat64, int, struct dirent64 ***, filter_function_t<struct dirent64>, compar_function_t<struct dirent64>);
+
+// non-absolute library paths aren't simply relative paths, they need
+// a whole lookup algorithm
+REDIRECT_1_2_AT(void *, dlopen, int);
 }
 
 static int
@@ -471,28 +479,6 @@ connect (int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 
     _connect = (int (*)(int sockfd, const struct sockaddr *addr, socklen_t addrlen)) dlsym (RTLD_NEXT, "connect");
     return socket_action (_connect, sockfd, addr, addrlen);
-}
-
-extern "C" void *
-dlopen (const char *path, int mode)
-{
-    void *(*_dlopen) (const char *path, int mode);
-    char *new_path = NULL;
-    void *result;
-
-    _dlopen = (void *(*)(const char *path, int mode)) dlsym (RTLD_NEXT, "dlopen");
-
-    if (path && path[0] == '/') {
-        new_path = redirect_path (path);
-        result = _dlopen (new_path, mode);
-        free (new_path);
-    } else {
-        // non-absolute library paths aren't simply relative paths, they need
-        // a whole lookup algorithm
-        result = _dlopen (path, mode);
-    }
-
-    return result;
 }
 
 static char *
