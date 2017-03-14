@@ -339,6 +339,10 @@ struct ABSOLUTE_REDIRECT {
   static inline char *redirect (const char *path) { return redirect_path_if_absolute (path); }
 };
 
+struct TARGET_REDIRECT {
+  static inline char *redirect (const char *path) { return redirect_path_target (path); }
+};
+
 template<typename R, const char *FUNC_NAME, typename REDIRECT_PATH_TYPE, size_t PATH_IDX, typename... Ts>
 inline R
 redirect_n(Ts... as)
@@ -356,11 +360,11 @@ redirect_n(Ts... as)
     return result;
 }
 
-template<typename R, const char *FUNC_NAME, typename REDIRECT_PATH_TYPE, typename... Ts>
+template<typename R, const char *FUNC_NAME, typename REDIRECT_PATH_TYPE, typename REDIRECT_TARGET_TYPE, typename... Ts>
 inline R
 redirect_target(const char *path, const char *target, Ts... as)
 {
-    char *new_target = redirect_path_target (target);
+    char *new_target = REDIRECT_TARGET_TYPE::redirect (target);
     R result = redirect_n<R, FUNC_NAME, REDIRECT_PATH_TYPE, 0, const char*, const char*, Ts...>(path, new_target);
     free (new_target);
     return result;
@@ -473,7 +477,7 @@ RET NAME (T1 a1, const char *path, T3 a3, T4 a4, T5 a5) { return redirect_n<RET,
 
 #define REDIRECT_TARGET(RET, NAME) \
 constexpr const char NAME ## _preload[] = #NAME; \
-RET NAME (const char *path, const char *target) { return redirect_target<RET, NAME ## _preload, NORMAL_REDIRECT>(path, target); }
+RET NAME (const char *path, const char *target) { return redirect_target<RET, NAME ## _preload, NORMAL_REDIRECT, TARGET_REDIRECT>(path, target); }
 
 #define REDIRECT_OPEN(NAME) \
 constexpr const char NAME ## _preload[] = #NAME; \
