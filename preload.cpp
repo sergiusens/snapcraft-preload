@@ -47,6 +47,7 @@
 #define LD_PRELOAD_LEN LITERAL_STRLEN (LD_PRELOAD)
 #define SNAPCRAFT_PRELOAD "SNAPCRAFT_PRELOAD"
 
+namespace {
 static char **saved_ld_preloads = NULL;
 static size_t num_saved_ld_preloads = 0;
 static char *saved_snapcraft_preload = NULL;
@@ -58,6 +59,12 @@ static size_t saved_snap_name_len = 0;
 static char *saved_snap_revision = NULL;
 static size_t saved_snap_revision_len = 0;
 static char saved_snap_devshm[NAME_MAX];
+
+template <typename dirent_t>
+using filter_function_t = int (*)(const dirent_t *);
+template <typename dirent_t>
+using compar_function_t = int (*)(const dirent_t **, const dirent_t **);
+} // unnamed namespace
 
 static void constructor() __attribute__((constructor));
 
@@ -314,7 +321,6 @@ redirect_open(Ts... as, va_separator, va_list va)
 
 extern "C"
 {
-
 #define REDIRECT_1_1(RET, NAME) \
 constexpr const char NAME ## _preload[] = #NAME; \
 RET NAME (const char *path) { return redirect_n<RET, NAME ## _preload, NORMAL_REDIRECT, 0, const char *>(path); }
@@ -326,6 +332,10 @@ RET NAME (const char *path, T2 a2) { return redirect_n<RET, NAME ## _preload, NO
 #define REDIRECT_1_3(RET, NAME, T2, T3) \
 constexpr const char NAME ## _preload[] = #NAME; \
 RET NAME (const char *path, T2 a2, T3 a3) { return redirect_n<RET, NAME ## _preload, NORMAL_REDIRECT, 0, const char *, T2, T3>(path, a2, a3); }
+
+#define REDIRECT_1_4(RET, NAME, T2, T3, T4) \
+constexpr const char NAME ## _preload[] = #NAME; \
+RET NAME (const char *path, T2 a2, T3 a3, T4 a4) { return redirect_n<RET, NAME ## _preload, NORMAL_REDIRECT, 0, const char *, T2, T3, T4>(path, a2, a3, a4); }
 
 #define REDIRECT_2_2(RET, NAME, T1) \
 constexpr const char NAME ## _preload[] = #NAME; \
@@ -406,22 +416,6 @@ REDIRECT_2_3(int, inotify_add_watch, int, uint32_t)
 }
 
 extern "C" int
-scandir (const char *dirp, struct dirent ***namelist, int (*filter)(const struct dirent *), int (*compar)(const struct dirent **, const struct dirent **))
-{
-    int (*_scandir) (const char *dirp, struct dirent ***namelist, int (*filter)(const struct dirent *), int (*compar)(const struct dirent **, const struct dirent **));
-    char *new_path = NULL;
-    int ret;
-
-    _scandir = (int (*)(const char *dirp, struct dirent ***namelist, int (*filter)(const struct dirent *), int (*compar)(const struct dirent **, const struct dirent **))) dlsym (RTLD_NEXT, "scandir");
-
-    new_path = redirect_path (dirp);
-    ret = _scandir (new_path, namelist, filter, compar);
-    free (new_path);
-
-    return ret;
-}
-
-extern "C" int
 scandirat (int dirfd, const char *dirp, struct dirent ***namelist, int (*filter)(const struct dirent *), int (*compar)(const struct dirent **, const struct dirent **))
 {
     int (*_scandirat) (int dirfd, const char *dirp, struct dirent ***namelist, int (*filter)(const struct dirent *), int (*compar)(const struct dirent **, const struct dirent **));
@@ -435,6 +429,8 @@ scandirat (int dirfd, const char *dirp, struct dirent ***namelist, int (*filter)
     free (new_path);
 
     return ret;
+REDIRECT_1_4(int, scandir, struct dirent ***, filter_function_t<struct dirent>, compar_function_t<struct dirent>);
+REDIRECT_1_4(int, scandir64, struct dirent64 ***, filter_function_t<struct dirent64>, compar_function_t<struct dirent64>);
 }
 
 static int
