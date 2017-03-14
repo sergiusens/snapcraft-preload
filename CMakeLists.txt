@@ -19,7 +19,7 @@ cmake_minimum_required(VERSION 3.2)
 set(LIBNAME "libsnapcraft-preload")
 add_library(snapcraft-preload SHARED preload.cpp)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14")
 
 set_target_properties(snapcraft-preload PROPERTIES
                       COMPILE_FLAGS "-DSNAPCRAFT_LIBNAME=\\\"${LIBNAME}.so\\\"")
