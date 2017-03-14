@@ -463,6 +463,10 @@ RET NAME (T1 a1, const char *path, T3 a3) { return redirect_n<RET, NAME ## _prel
 constexpr const char NAME ## _preload[] = #NAME; \
 RET NAME (T1 a1, const char *path, T3 a3, T4 a4) { return redirect_n<RET, NAME ## _preload, ABSOLUTE_REDIRECT, 1, T1, const char *, T3, T4>(a1, path, a3, a4); }
 
+#define REDIRECT_2_5_AT(RET, NAME, T1, T3, T4, T5) \
+constexpr const char NAME ## _preload[] = #NAME; \
+RET NAME (T1 a1, const char *path, T3 a3, T4 a4, T5 a5) { return redirect_n<RET, NAME ## _preload, ABSOLUTE_REDIRECT, 1, T1, const char *, T3, T4, T5>(a1, path, a3, a4, a5); }
+
 #define REDIRECT_TARGET(RET, NAME) \
 constexpr const char NAME ## _preload[] = #NAME; \
 RET NAME (const char *path, const char *target) { return redirect_target<RET, NAME ## _preload, NORMAL_REDIRECT>(path, target); }
@@ -519,24 +523,10 @@ REDIRECT_OPEN(open64)
 REDIRECT_OPEN_AT(openat)
 REDIRECT_OPEN_AT(openat64)
 REDIRECT_2_3(int, inotify_add_watch, int, uint32_t)
-}
-
-extern "C" int
-scandirat (int dirfd, const char *dirp, struct dirent ***namelist, int (*filter)(const struct dirent *), int (*compar)(const struct dirent **, const struct dirent **))
-{
-    int (*_scandirat) (int dirfd, const char *dirp, struct dirent ***namelist, int (*filter)(const struct dirent *), int (*compar)(const struct dirent **, const struct dirent **));
-    char *new_path = NULL;
-    int ret;
-
-    _scandirat = (int (*)(int dirfd, const char *dirp, struct dirent ***namelist, int (*filter)(const struct dirent *), int (*compar)(const struct dirent **, const struct dirent **))) dlsym (RTLD_NEXT, "scandirat");
-
-    new_path = redirect_path_if_absolute (dirp);
-    ret = _scandirat (dirfd, new_path, namelist, filter, compar);
-    free (new_path);
-
-    return ret;
 REDIRECT_1_4(int, scandir, struct dirent ***, filter_function_t<struct dirent>, compar_function_t<struct dirent>);
 REDIRECT_1_4(int, scandir64, struct dirent64 ***, filter_function_t<struct dirent64>, compar_function_t<struct dirent64>);
+REDIRECT_2_5_AT(int, scandirat, int, struct dirent ***, filter_function_t<struct dirent>, compar_function_t<struct dirent>);
+REDIRECT_2_5_AT(int, scandirat64, int, struct dirent64 ***, filter_function_t<struct dirent64>, compar_function_t<struct dirent64>);
 }
 
 static int
