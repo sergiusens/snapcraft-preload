@@ -436,8 +436,10 @@ REDIRECT_2_5_AT(int, scandirat64, int, struct dirent64 ***, filter_function_t<st
 REDIRECT_1_2_AT(void *, dlopen, int);
 }
 
+using socket_action_t = int (*) (int, const struct sockaddr *, socklen_t);
+
 static int
-socket_action (int (*action) (int sockfd, const struct sockaddr *addr, socklen_t addrlen), int sockfd, const struct sockaddr *addr, socklen_t addrlen)
+socket_action (socket_action_t action, int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 {
     const struct sockaddr_un *un_addr = (const struct sockaddr_un *)addr;
 
@@ -471,7 +473,7 @@ socket_action (int (*action) (int sockfd, const struct sockaddr *addr, socklen_t
 extern "C" int
 bind (int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 {
-    static int (*_bind) (int sockfd, const struct sockaddr *addr, socklen_t addrlen) =
+    static socket_action_t _bind =
         (decltype(_bind)) dlsym (RTLD_NEXT, "bind");
 
     return socket_action (_bind, sockfd, addr, addrlen);
@@ -480,7 +482,7 @@ bind (int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 extern "C" int
 connect (int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 {
-    static int (*_connect) (int sockfd, const struct sockaddr *addr, socklen_t addrlen) =
+    static socket_action_t _connect =
         (decltype(_connect)) dlsym (RTLD_NEXT, "connect");
 
     return socket_action (_connect, sockfd, addr, addrlen);
