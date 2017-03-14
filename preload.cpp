@@ -60,6 +60,8 @@ static char *saved_snap_revision = NULL;
 static size_t saved_snap_revision_len = 0;
 static char saved_snap_devshm[NAME_MAX];
 
+static int (*_access) (const char *, int) = NULL;
+
 template <typename dirent_t>
 using filter_function_t = int (*)(const dirent_t *);
 template <typename dirent_t>
@@ -350,7 +352,7 @@ redirect_n(Ts... as)
     std::tuple<Ts...> tpl(as...);
     const char *path = std::get<PATH_IDX>(tpl);
     char *new_path = REDIRECT_PATH_TYPE::redirect (path);
-    std::function<R(Ts...)> func (reinterpret_cast<R(*)(Ts...)> (dlsym (RTLD_NEXT, FUNC_NAME)));
+    static std::function<R(Ts...)> func (reinterpret_cast<R(*)(Ts...)> (dlsym (RTLD_NEXT, FUNC_NAME)));
 
     std::get<PATH_IDX>(tpl) = new_path;
     R result = call_with_tuple_args (func, tpl);
@@ -577,7 +579,7 @@ socket_action (socket_action_t action, int sockfd, const struct sockaddr *addr, 
 extern "C" int
 bind (int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 {
-    static socket_action_t _bind =
+    static int (*_bind) (int sockfd, const struct sockaddr *addr, socklen_t addrlen) =
         (decltype(_bind)) dlsym (RTLD_NEXT, "bind");
 
     return socket_action (_bind, sockfd, addr, addrlen);
@@ -586,7 +588,7 @@ bind (int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 extern "C" int
 connect (int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 {
-    static socket_action_t _connect =
+    static int (*_connect) (int sockfd, const struct sockaddr *addr, socklen_t addrlen) =
         (decltype(_connect)) dlsym (RTLD_NEXT, "connect");
 
     return socket_action (_connect, sockfd, addr, addrlen);
