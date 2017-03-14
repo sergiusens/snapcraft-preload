@@ -290,14 +290,9 @@ template<typename R, const char *FUNC_NAME, typename REDIRECT_PATH_TYPE, typenam
 inline R
 redirect_target(const char *path, const char *target, Ts... as)
 {
-    auto func = (reinterpret_cast<R(*)(const char *, const char *, Ts...)> (dlsym (RTLD_NEXT, FUNC_NAME)));
-    char *new_path = REDIRECT_PATH_TYPE::redirect (path);
     char *new_target = redirect_path_target (target);
-
-    R result = func (path, target, std::forward<Ts>(as)...);
-    free (new_path);
+    R result = redirect_n<R, FUNC_NAME, REDIRECT_PATH_TYPE, 0, const char*, const char*, Ts...>(path, new_target);
     free (new_target);
-
     return result;
 }
 
