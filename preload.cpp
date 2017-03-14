@@ -60,6 +60,8 @@ static char *saved_snap_revision = NULL;
 static size_t saved_snap_revision_len = 0;
 static char saved_snap_devshm[NAME_MAX];
 
+static int (*_access) (const char *, int) = NULL;
+
 template <typename dirent_t>
 using filter_function_t = int (*)(const dirent_t *);
 template <typename dirent_t>
@@ -92,6 +94,8 @@ void constructor()
 {
     char *ld_preload_copy, *p, *savedptr = NULL;
     size_t libnamelen;
+
+    _access = (decltype(_access)) dlsym (RTLD_NEXT, "access");
 
     // We need to save LD_PRELOAD and SNAPCRAFT_PRELOAD in case we need to
     // propagate the values to an exec'd program.
@@ -157,7 +161,6 @@ redirect_writable_path (const char *pathname, const char *basepath)
 static char *
 redirect_path_full (const char *pathname, int check_parent, int only_if_absolute)
 {
-    int (*_access) (const char *pathname, int mode);
     char *redirected_pathname;
     int ret;
     char *slash = 0;
@@ -176,8 +179,6 @@ redirect_path_full (const char *pathname, int check_parent, int only_if_absolute
     if (only_if_absolute && pathname[0] != '/') {
         return strdup (pathname);
     }
-
-    _access = (int (*)(const char *pathname, int mode)) dlsym (RTLD_NEXT, "access");
 
     // And each app should have its own /var/lib writable tree.  Here, we want
     // to support reading the base system's files if they exist, else let the app
@@ -287,7 +288,7 @@ redirect_n(Ts... as)
     std::tuple<Ts...> tpl(as...);
     const char *path = std::get<PATH_IDX>(tpl);
     char *new_path = REDIRECT_PATH_TYPE::redirect (path);
-    std::function<R(Ts...)> func (reinterpret_cast<R(*)(Ts...)> (dlsym (RTLD_NEXT, FUNC_NAME)));
+    static std::function<R(Ts...)> func (reinterpret_cast<R(*)(Ts...)> (dlsym (RTLD_NEXT, FUNC_NAME)));
 
     std::get<PATH_IDX>(tpl) = new_path;
     R result = call_with_tuple_args (func, tpl);
@@ -470,18 +471,18 @@ socket_action (int (*action) (int sockfd, const struct sockaddr *addr, socklen_t
 extern "C" int
 bind (int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 {
-    int (*_bind) (int sockfd, const struct sockaddr *addr, socklen_t addrlen);
+    static int (*_bind) (int sockfd, const struct sockaddr *addr, socklen_t addrlen) =
+        (decltype(_bind)) dlsym (RTLD_NEXT, "bind");
 
-    _bind = (int (*)(int sockfd, const struct sockaddr *addr, socklen_t addrlen)) dlsym (RTLD_NEXT, "bind");
     return socket_action (_bind, sockfd, addr, addrlen);
 }
 
 extern "C" int
 connect (int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 {
-    int (*_connect) (int sockfd, const struct sockaddr *addr, socklen_t addrlen);
+    static int (*_connect) (int sockfd, const struct sockaddr *addr, socklen_t addrlen) =
+        (decltype(_connect)) dlsym (RTLD_NEXT, "connect");
 
-    _connect = (int (*)(int sockfd, const struct sockaddr *addr, socklen_t addrlen)) dlsym (RTLD_NEXT, "connect");
     return socket_action (_connect, sockfd, addr, addrlen);
 }
 
@@ -605,12 +606,12 @@ execve32_wrapper (int (*_execve) (const char *path, char *const argv[], char *co
 static int
 execve_wrapper (const char *func, const char *path, char *const argv[], char *const envp[])
 {
-    int (*_execve) (const char *path, char *const argv[], char *const envp[]);
     char *new_path = NULL;
     char **new_envp = NULL;
     int i, result;
 
-    _execve = (int (*)(const char *path, char *const argv[], char *const envp[])) dlsym (RTLD_NEXT, func);
+    static int (*_execve) (const char *, char *const[], char *const[]) =
+        (decltype(_execve)) dlsym (RTLD_NEXT, func);
 
     new_path = redirect_path (path);
 
@@ -629,8 +630,6 @@ execve_wrapper (const char *func, const char *path, char *const argv[], char *co
         // ld.so loader which will only work if the architecture matches.  So if
         // we failed to run it normally above because the loader couldn't find
         // something, try with our own 32-bit loader.
-        int (*_access) (const char *pathname, int mode);
-        _access = (int (*)(const char *pathname, int mode)) dlsym (RTLD_NEXT, "access");
         if (_access (new_path, F_OK) == 0) {
             // Only actually try this if the path actually did exist.  That
             // means the ENOENT must have been a missing linked library or the
