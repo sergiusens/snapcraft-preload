@@ -4,7 +4,7 @@ Add this as a part to your `snapcraft.yaml`:
 
 ```yaml
 parts:
-    preload:
+    snapcraft-preload:
         source: https://github.com/sergiusens/snapcraft-preload.git
         plugin: cmake
 ```

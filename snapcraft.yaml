@@ -4,15 +4,23 @@ summary: Preloader utility for snaps
 description: |
     Tired of dealing with hardcoded paths and code just being antiquated? This is the part for you.
     While still in experimental stages it is useful already. All you need to do is add this part
-    to your snapcraft project and prepend `command` entries in `apps` with `preload`.
+    to your snapcraft project and prepend `command` entries in `apps` with `snapcraft-preload`.
 
 grade: devel
 confinement: devmode
 
 parts:
-    preload:
+    snapcraft-preload:
         source: .
         plugin: cmake
         build-packages:
             - gcc-multilib
             - g++-multilib
+
+    # We keep the 'preload' part to be backward compatible
+    preload:
+      plugin: nil
+      install: |
+        mkdir -p $SNAPCRAFT_PART_INSTALL/bin
+        ln -sv snapcraft-preload $SNAPCRAFT_PART_INSTALL/bin/preload
+      after: [snapcraft-preload]
