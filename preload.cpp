@@ -158,8 +158,10 @@ redirect_writable_path (const char *pathname, const char *basepath)
     return redirected_pathname;
 }
 
-static char *
-redirect_path_full (const char *pathname, int check_parent, int only_if_absolute)
+namespace {
+
+char *
+redirect_path_full (const char *pathname, bool check_parent, bool only_if_absolute)
 {
     char *redirected_pathname;
     int ret;
@@ -240,24 +242,22 @@ redirect_path_full (const char *pathname, int check_parent, int only_if_absolute
     }
 }
 
-namespace {
-
 inline char *
 redirect_path (const char *pathname)
 {
-    return redirect_path_full (pathname, 0, 0);
+    return redirect_path_full (pathname, /*check_parent*/ false, /*only_if_absolute*/ false);
 }
 
 inline char *
 redirect_path_target (const char *pathname)
 {
-    return redirect_path_full (pathname, 1, 0);
+    return redirect_path_full (pathname, /*check_parent*/ true, /*only_if_absolute*/ false);
 }
 
 inline char *
 redirect_path_if_absolute (const char *pathname)
 {
-    return redirect_path_full (pathname, 0, 1);
+    return redirect_path_full (pathname, /*check_parent*/ false, /*only_if_absolute*/ true);
 }
 
 // helper class
@@ -316,8 +316,9 @@ redirect_open(Ts... as, va_separator, va_list va)
     mode_t mode = 0;
     int flags = std::get<PATH_IDX+1>(std::tuple<Ts...>(as...));
 
-    if (flags & (O_CREAT|O_TMPFILE))
+    if (flags & (O_CREAT|O_TMPFILE)) {
         mode = va_arg (va, mode_t);
+    }
 
     return redirect_n<R, FUNC_NAME, REDIRECT_PATH_TYPE, PATH_IDX, Ts..., mode_t>(as..., mode);
 }
