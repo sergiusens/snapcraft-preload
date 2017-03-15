@@ -380,8 +380,9 @@ redirect_open(Ts... as, va_separator, va_list va)
     mode_t mode = 0;
     int flags = std::get<PATH_IDX+1>(std::tuple<Ts...>(as...));
 
-    if (flags & (O_CREAT|O_TMPFILE))
+    if (flags & (O_CREAT|O_TMPFILE)) {
         mode = va_arg (va, mode_t);
+    }
 
     return redirect_n<R, FUNC_NAME, REDIRECT_PATH_TYPE, PATH_IDX, Ts..., mode_t>(as..., mode);
 }
