@@ -14,6 +14,8 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+cmake_minimum_required(VERSION 3.2)
+
 add_library(snapcraft-preload SHARED preload.c)
 set_target_properties(snapcraft-preload PROPERTIES
                       COMPILE_FLAGS "-DSNAPCRAFT_LIBNAME=\\\"libsnapcraft-preload.so\\\"")
@@ -28,4 +30,5 @@ if(${ARCHITECTURE} STREQUAL "x86_64")
 endif()
 
 install(TARGETS snapcraft-preload LIBRARY DESTINATION lib)
+install(PROGRAMS snapcraft-preload DESTINATION bin)
 install(PROGRAMS preload DESTINATION bin)

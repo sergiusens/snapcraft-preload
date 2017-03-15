@@ -190,7 +190,6 @@ redirect_path_full (const char *pathname, int check_parent, int only_if_absolute
         return redirected_pathname;
     }
 
-    redirected_pathname = malloc (PATH_MAX);
 
     if (preload_dir[preload_dir_len - 1] == '/') {
         chop = 1;
@@ -496,56 +495,54 @@ scandirat (int dirfd, const char *dirp, struct dirent ***namelist, int (*filter)
     return ret;
 }
 
+static int
+socket_action (int (*action) (int sockfd, const struct sockaddr *addr, socklen_t addrlen), int sockfd, const struct sockaddr *addr, socklen_t addrlen)
+{
+    const struct sockaddr_un *un_addr = (const struct sockaddr_un *)addr;
+
+    if (addr->sa_family != AF_UNIX) {
+        // Non-unix sockets
+        return action (sockfd, addr, addrlen);
+    }
+
+    if (un_addr->sun_path[0] == '\0') {
+        // Abstract sockets
+        return action (sockfd, addr, addrlen);
+    }
+
+    int result = 0;
+    char *new_path = redirect_path (un_addr->sun_path);
+
+    if (strncmp (un_addr->sun_path, new_path, PATH_MAX) == 0) {
+        result = action (sockfd, addr, addrlen);
+    } else {
+        struct sockaddr_un new_addr = {0};
+        new_addr.sun_family = AF_UNIX;
+        new_addr.sun_path[0] = '\0';
+        strncat (new_addr.sun_path, new_path, PATH_MAX - 1);
+        result = action (sockfd, (const struct sockaddr *) &new_addr, sizeof (new_addr));
+    }
+
+    free (new_path);
+    return result;
+}
+
 int
 bind (int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 {
     int (*_bind) (int sockfd, const struct sockaddr *addr, socklen_t addrlen);
-    int result;
 
     _bind = (int (*)(int sockfd, const struct sockaddr *addr, socklen_t addrlen)) dlsym (RTLD_NEXT, "bind");
-
-    if (addr->sa_family == AF_UNIX && ((const struct sockaddr_un *)addr)->sun_path[0] != 0) { // could be abstract socket
-        char *new_path = NULL;
-        struct sockaddr_un new_addr;
-
-        new_path = redirect_path (((const struct sockaddr_un *)addr)->sun_path);
-
-        new_addr.sun_family = AF_UNIX;
-        strcpy (new_addr.sun_path, new_path);
-        free (new_path);
-
-        result = _bind (sockfd, (const struct sockaddr *)&new_addr, sizeof(new_addr));
-    } else {
-        result = _bind (sockfd, addr, addrlen);
-    }
-
-    return result;
+    return socket_action (_bind, sockfd, addr, addrlen);
 }
 
 int
 connect (int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 {
     int (*_connect) (int sockfd, const struct sockaddr *addr, socklen_t addrlen);
-    int result;
 
     _connect = (int (*)(int sockfd, const struct sockaddr *addr, socklen_t addrlen)) dlsym (RTLD_NEXT, "connect");
-
-    if (addr->sa_family == AF_UNIX) {
-        char *new_path = NULL;
-        struct sockaddr_un new_addr;
-
-        new_path = redirect_path (((const struct sockaddr_un *)addr)->sun_path);
-
-        new_addr.sun_family = AF_UNIX;
-        strcpy (new_addr.sun_path, new_path);
-        free (new_path);
-
-        result = _connect (sockfd, (const struct sockaddr *)&new_addr, sizeof(new_addr));
-    } else {
-        result = _connect (sockfd, addr, addrlen);
-    }
-
-    return result;
+    return socket_action (_connect, sockfd, addr, addrlen);
 }
 
 void *
