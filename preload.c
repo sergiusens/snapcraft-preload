@@ -190,7 +190,6 @@ redirect_path_full (const char *pathname, int check_parent, int only_if_absolute
         return redirected_pathname;
     }
 
-
     if (preload_dir[preload_dir_len - 1] == '/') {
         chop = 1;
     }
