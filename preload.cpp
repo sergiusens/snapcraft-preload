@@ -328,60 +328,60 @@ redirect_open(Ts... as, va_separator, va_list va)
 extern "C"
 {
 #define REDIRECT_1_1(RET, NAME) \
-constexpr const char NAME ## _preload[] = #NAME; \
-RET NAME (const char *path) { return redirect_n<RET, NAME ## _preload, NORMAL_REDIRECT, 0>(path); }
+constexpr const char _ ## NAME ## _preload[] = #NAME; \
+RET NAME (const char *path) { return redirect_n<RET, _ ## NAME ## _preload, NORMAL_REDIRECT, 0>(path); }
 
 #define REDIRECT_1_2(RET, NAME, T2) \
-constexpr const char NAME ## _preload[] = #NAME; \
-RET NAME (const char *path, T2 a2) { return redirect_n<RET, NAME ## _preload, NORMAL_REDIRECT, 0>(path, a2); }
+constexpr const char _ ## NAME ## _preload[] = #NAME; \
+RET NAME (const char *path, T2 a2) { return redirect_n<RET, _ ## NAME ## _preload, NORMAL_REDIRECT, 0>(path, a2); }
 
 #define REDIRECT_1_2_AT(RET, NAME, T2) \
-constexpr const char NAME ## _preload[] = #NAME; \
-RET NAME (const char *path, T2 a2) { return redirect_n<RET, NAME ## _preload, ABSOLUTE_REDIRECT, 0>(path, a2); }
+constexpr const char _ ## NAME ## _preload[] = #NAME; \
+RET NAME (const char *path, T2 a2) { return redirect_n<RET, _ ## NAME ## _preload, ABSOLUTE_REDIRECT, 0>(path, a2); }
 
 #define REDIRECT_1_3(RET, NAME, T2, T3) \
-constexpr const char NAME ## _preload[] = #NAME; \
-RET NAME (const char *path, T2 a2, T3 a3) { return redirect_n<RET, NAME ## _preload, NORMAL_REDIRECT, 0>(path, a2, a3); }
+constexpr const char _ ## NAME ## _preload[] = #NAME; \
+RET NAME (const char *path, T2 a2, T3 a3) { return redirect_n<RET, _ ## NAME ## _preload, NORMAL_REDIRECT, 0>(path, a2, a3); }
 
 #define REDIRECT_1_4(RET, NAME, T2, T3, T4) \
-constexpr const char NAME ## _preload[] = #NAME; \
-RET NAME (const char *path, T2 a2, T3 a3, T4 a4) { return redirect_n<RET, NAME ## _preload, NORMAL_REDIRECT, 0>(path, a2, a3, a4); }
+constexpr const char _ ## NAME ## _preload[] = #NAME; \
+RET NAME (const char *path, T2 a2, T3 a3, T4 a4) { return redirect_n<RET, _ ## NAME ## _preload, NORMAL_REDIRECT, 0>(path, a2, a3, a4); }
 
 #define REDIRECT_2_2(RET, NAME, T1) \
-constexpr const char NAME ## _preload[] = #NAME; \
-RET NAME (T1 a1, const char *path) { return redirect_n<RET, NAME ## _preload, NORMAL_REDIRECT, 1>(a1, path); }
+constexpr const char _ ## NAME ## _preload[] = #NAME; \
+RET NAME (T1 a1, const char *path) { return redirect_n<RET, _ ## NAME ## _preload, NORMAL_REDIRECT, 1>(a1, path); }
 
 #define REDIRECT_2_3(RET, NAME, T1, T3) \
-constexpr const char NAME ## _preload[] = #NAME; \
-RET NAME (T1 a1, const char *path, T3 a3) { return redirect_n<RET, NAME ## _preload, NORMAL_REDIRECT, 1, T1>(a1, path, a3); }
+constexpr const char _ ## NAME ## _preload[] = #NAME; \
+RET NAME (T1 a1, const char *path, T3 a3) { return redirect_n<RET, _ ## NAME ## _preload, NORMAL_REDIRECT, 1, T1>(a1, path, a3); }
 
 #define REDIRECT_3_5(RET, NAME, T1, T2, T4, T5) \
-constexpr const char NAME ## _preload[] = #NAME; \
-RET NAME (T1 a1, T2 a2, const char *path, T4 a4, T5 a5) { return redirect_n<RET, NAME ## _preload, NORMAL_REDIRECT, 2>(a1, a2, path, a4, a5); }
+constexpr const char _ ## NAME ## _preload[] = #NAME; \
+RET NAME (T1 a1, T2 a2, const char *path, T4 a4, T5 a5) { return redirect_n<RET, _ ## NAME ## _preload, NORMAL_REDIRECT, 2>(a1, a2, path, a4, a5); }
 
 #define REDIRECT_2_3_AT(RET, NAME, T1, T3) \
-constexpr const char NAME ## _preload[] = #NAME; \
-RET NAME (T1 a1, const char *path, T3 a3) { return redirect_n<RET, NAME ## _preload, ABSOLUTE_REDIRECT, 1>(a1, path, a3); }
+constexpr const char _ ## NAME ## _preload[] = #NAME; \
+RET NAME (T1 a1, const char *path, T3 a3) { return redirect_n<RET, _ ## NAME ## _preload, ABSOLUTE_REDIRECT, 1>(a1, path, a3); }
 
 #define REDIRECT_2_4_AT(RET, NAME, T1, T3, T4) \
-constexpr const char NAME ## _preload[] = #NAME; \
-RET NAME (T1 a1, const char *path, T3 a3, T4 a4) { return redirect_n<RET, NAME ## _preload, ABSOLUTE_REDIRECT, 1>(a1, path, a3, a4); }
+constexpr const char _ ## NAME ## _preload[] = #NAME; \
+RET NAME (T1 a1, const char *path, T3 a3, T4 a4) { return redirect_n<RET, _ ## NAME ## _preload, ABSOLUTE_REDIRECT, 1>(a1, path, a3, a4); }
 
 #define REDIRECT_2_5_AT(RET, NAME, T1, T3, T4, T5) \
-constexpr const char NAME ## _preload[] = #NAME; \
-RET NAME (T1 a1, const char *path, T3 a3, T4 a4, T5 a5) { return redirect_n<RET, NAME ## _preload, ABSOLUTE_REDIRECT, 1>(a1, path, a3, a4, a5); }
+constexpr const char _ ## NAME ## _preload[] = #NAME; \
+RET NAME (T1 a1, const char *path, T3 a3, T4 a4, T5 a5) { return redirect_n<RET, _ ## NAME ## _preload, ABSOLUTE_REDIRECT, 1>(a1, path, a3, a4, a5); }
 
 #define REDIRECT_TARGET(RET, NAME) \
-constexpr const char NAME ## _preload[] = #NAME; \
-RET NAME (const char *path, const char *target) { return redirect_target<RET, NAME ## _preload, NORMAL_REDIRECT, TARGET_REDIRECT>(path, target); }
+constexpr const char _ ## NAME ## _preload[] = #NAME; \
+RET NAME (const char *path, const char *target) { return redirect_target<RET, _ ## NAME ## _preload, NORMAL_REDIRECT, TARGET_REDIRECT>(path, target); }
 
 #define REDIRECT_OPEN(NAME) \
-constexpr const char NAME ## _preload[] = #NAME; \
-int NAME (const char *path, int flags, ...) { va_list va; va_start(va, flags); int ret = redirect_open<int, NAME ## _preload, NORMAL_REDIRECT, 0, const char *, int>(path, flags, va_separator(), va); va_end(va); return ret; }
+constexpr const char _ ## NAME ## _preload[] = #NAME; \
+int NAME (const char *path, int flags, ...) { va_list va; va_start(va, flags); int ret = redirect_open<int, _ ## NAME ## _preload, NORMAL_REDIRECT, 0, const char *, int>(path, flags, va_separator(), va); va_end(va); return ret; }
 
 #define REDIRECT_OPEN_AT(NAME) \
-constexpr const char NAME ## _preload[] = #NAME; \
-int NAME (int dirfp, const char *path, int flags, ...) { va_list va; va_start(va, flags); int ret = redirect_open<int, NAME ## _preload, ABSOLUTE_REDIRECT, 1, int, const char *, int>(dirfp, path, flags, va_separator(), va); va_end(va); return ret; }
+constexpr const char _ ## NAME ## _preload[] = #NAME; \
+int NAME (int dirfp, const char *path, int flags, ...) { va_list va; va_start(va, flags); int ret = redirect_open<int, _ ## NAME ## _preload, ABSOLUTE_REDIRECT, 1, int, const char *, int>(dirfp, path, flags, va_separator(), va); va_end(va); return ret; }
 
 REDIRECT_1_2(FILE *, fopen, const char *)
 REDIRECT_1_1(int, unlink)
