@@ -391,48 +391,52 @@ redirect_open(Ts... as, va_separator, va_list va)
 
 extern "C"
 {
-#define REDIRECT_1_1(RET, NAME) \
+#define _CM_ ,
+
+#define REDIRECT_1(RET, NAME, REDIR_TYPE, SIG, ARGS) \
 constexpr const char _ ## NAME ## _preload[] = #NAME; \
-RET NAME (const char *path) { return redirect_n<RET, _ ## NAME ## _preload, NORMAL_REDIRECT, 0>(path); }
+RET NAME (const char *path SIG) { return redirect_n<RET, _ ## NAME ## _preload, REDIR_TYPE, 0>(path ARGS); }
+
+#define REDIRECT_2(RET, NAME, REDIR_TYPE, T1, SIG, ARGS) \
+constexpr const char _ ## NAME ## _preload[] = #NAME; \
+RET NAME (T1, const char *path SIG) { return redirect_n<RET, _ ## NAME ## _preload, REDIR_TYPE, 1>(a1, path ARGS); }
+
+#define REDIRECT_3(RET, NAME, REDIR_TYPE, T1, T2, SIG, ARGS) \
+constexpr const char _ ## NAME ## _preload[] = #NAME; \
+RET NAME (T1 a1, T2 a2, const char *path SIG) { return redirect_n<RET, _ ## NAME ## _preload, REDIR_TYPE, 2>(a1, a2, path ARGS); }
+
+#define REDIRECT_1_1(RET, NAME) \
+REDIRECT_1(RET, NAME, NORMAL_REDIRECT, ,)
 
 #define REDIRECT_1_2(RET, NAME, T2) \
-constexpr const char _ ## NAME ## _preload[] = #NAME; \
-RET NAME (const char *path, T2 a2) { return redirect_n<RET, _ ## NAME ## _preload, NORMAL_REDIRECT, 0>(path, a2); }
+REDIRECT_1(RET, NAME, NORMAL_REDIRECT, _CM_ T2 a2, _CM_ a2)
 
 #define REDIRECT_1_2_AT(RET, NAME, T2) \
-constexpr const char _ ## NAME ## _preload[] = #NAME; \
-RET NAME (const char *path, T2 a2) { return redirect_n<RET, _ ## NAME ## _preload, ABSOLUTE_REDIRECT, 0>(path, a2); }
+REDIRECT_1(RET, NAME, ABSOLUTE_REDIRECT, _CM_ T2 a2, _CM_ a2)
 
 #define REDIRECT_1_3(RET, NAME, T2, T3) \
-constexpr const char _ ## NAME ## _preload[] = #NAME; \
-RET NAME (const char *path, T2 a2, T3 a3) { return redirect_n<RET, _ ## NAME ## _preload, NORMAL_REDIRECT, 0>(path, a2, a3); }
+REDIRECT_1(RET, NAME, NORMAL_REDIRECT, _CM_ T2 a2 _CM_ T3 a3, _CM_ a2 _CM_ a3)
 
 #define REDIRECT_1_4(RET, NAME, T2, T3, T4) \
-constexpr const char _ ## NAME ## _preload[] = #NAME; \
-RET NAME (const char *path, T2 a2, T3 a3, T4 a4) { return redirect_n<RET, _ ## NAME ## _preload, NORMAL_REDIRECT, 0>(path, a2, a3, a4); }
+REDIRECT_1(RET, NAME, NORMAL_REDIRECT, _CM_ T2 a2 _CM_ T3 a3 _CM_ T4 a4, _CM_ a2 _CM_ a3 _CM_ a4)
 
 #define REDIRECT_2_2(RET, NAME, T1) \
-constexpr const char _ ## NAME ## _preload[] = #NAME; \
-RET NAME (T1 a1, const char *path) { return redirect_n<RET, _ ## NAME ## _preload, NORMAL_REDIRECT, 1>(a1, path); }
+REDIRECT_2(RET, NAME, NORMAL_REDIRECT, T1, _CM_ T1 a1, _CM_ a1)
 
 #define REDIRECT_2_3(RET, NAME, T1, T3) \
-constexpr const char _ ## NAME ## _preload[] = #NAME; \
-RET NAME (T1 a1, const char *path, T3 a3) { return redirect_n<RET, _ ## NAME ## _preload, NORMAL_REDIRECT, 1, T1>(a1, path, a3); }
-
-#define REDIRECT_3_5(RET, NAME, T1, T2, T4, T5) \
-RET NAME (T1 a1, T2 a2, const char *path, T4 a4, T5 a5) { return redirect_n<RET, NAME ## _preload, NORMAL_REDIRECT, 2>(a1, a2, path, a4, a5); }
+REDIRECT_2(RET, NAME, NORMAL_REDIRECT, T1 a1, _CM_ T3 a3, _CM_ a3)
 
 #define REDIRECT_2_3_AT(RET, NAME, T1, T3) \
-constexpr const char _ ## NAME ## _preload[] = #NAME; \
-RET NAME (T1 a1, const char *path, T3 a3) { return redirect_n<RET, _ ## NAME ## _preload, ABSOLUTE_REDIRECT, 1>(a1, path, a3); }
+REDIRECT_2(RET, NAME, ABSOLUTE_REDIRECT, T1 a1, _CM_ T3 a3, _CM_ a3)
 
 #define REDIRECT_2_4_AT(RET, NAME, T1, T3, T4) \
-constexpr const char _ ## NAME ## _preload[] = #NAME; \
-RET NAME (T1 a1, const char *path, T3 a3, T4 a4) { return redirect_n<RET, _ ## NAME ## _preload, ABSOLUTE_REDIRECT, 1>(a1, path, a3, a4); }
+REDIRECT_2(RET, NAME, ABSOLUTE_REDIRECT, T1 a1, _CM_ T3 a3 _CM_ T4 a4, _CM_ a3 _CM_ a4)
 
 #define REDIRECT_2_5_AT(RET, NAME, T1, T3, T4, T5) \
-constexpr const char _ ## NAME ## _preload[] = #NAME; \
-RET NAME (T1 a1, const char *path, T3 a3, T4 a4, T5 a5) { return redirect_n<RET, _ ## NAME ## _preload, ABSOLUTE_REDIRECT, 1>(a1, path, a3, a4, a5); }
+REDIRECT_2(RET, NAME, ABSOLUTE_REDIRECT, T1 a1, _CM_ T3 a3 _CM_ T4 a4 _CM_ T5 a5, _CM_ a3 _CM_ a4 _CM_ a5)
+
+#define REDIRECT_3_5(RET, NAME, T1, T2, T4, T5) \
+REDIRECT_3(RET, NAME, NORMAL_REDIRECT, T1, T2, _CM_ T4 a4 _CM_ T5 a5, _CM_ a4 _CM_ a5)
 
 #define REDIRECT_TARGET(RET, NAME) \
 constexpr const char _ ## NAME ## _preload[] = #NAME; \
