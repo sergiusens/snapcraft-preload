@@ -21,6 +21,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif(NOT CMAKE_BUILD_TYPE)
 
 set(LIBNAME "libsnapcraft-preload")
+set(LIBPATH "lib")
 add_library(snapcraft-preload SHARED preload.cpp)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14")
