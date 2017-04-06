@@ -21,6 +21,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif(NOT CMAKE_BUILD_TYPE)
 
 set(LIBNAME "libsnapcraft-preload")
+set(LIBPATH "lib")
 add_library(snapcraft-preload SHARED preload.cpp)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14")
@@ -37,5 +38,7 @@ if(${ARCHITECTURE} STREQUAL "x86_64")
     target_link_libraries(snapcraft-preload32 -ldl -m32)
 endif()
 
-install(TARGETS snapcraft-preload LIBRARY DESTINATION lib)
-install(PROGRAMS snapcraft-preload DESTINATION bin)
+configure_file(snapcraft-preload.in snapcraft-preload @ONLY)
+
+install(TARGETS snapcraft-preload LIBRARY DESTINATION ${LIBPATH})
+install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/snapcraft-preload DESTINATION bin)
