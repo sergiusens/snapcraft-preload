@@ -48,19 +48,19 @@
 #define SNAPCRAFT_PRELOAD "SNAPCRAFT_PRELOAD"
 
 namespace {
-static char **saved_ld_preloads = NULL;
-static size_t num_saved_ld_preloads = 0;
-static char *saved_snapcraft_preload = NULL;
-static size_t saved_snapcraft_preload_len = 0;
-static char *saved_varlib = NULL;
-static size_t saved_varlib_len = 0;
-static char *saved_snap_name = NULL;
-static size_t saved_snap_name_len = 0;
-static char *saved_snap_revision = NULL;
-static size_t saved_snap_revision_len = 0;
-static char saved_snap_devshm[NAME_MAX];
+char **saved_ld_preloads = NULL;
+size_t num_saved_ld_preloads = 0;
+char *saved_snapcraft_preload = NULL;
+size_t saved_snapcraft_preload_len = 0;
+char *saved_varlib = NULL;
+size_t saved_varlib_len = 0;
+char *saved_snap_name = NULL;
+size_t saved_snap_name_len = 0;
+char *saved_snap_revision = NULL;
+size_t saved_snap_revision_len = 0;
+char saved_snap_devshm[NAME_MAX];
 
-static int (*_access) (const char *, int) = NULL;
+int (*_access) (const char *, int) = NULL;
 
 template <typename dirent_t>
 using filter_function_t = int (*)(const dirent_t *);
