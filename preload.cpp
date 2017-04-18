@@ -326,66 +326,6 @@ redirect_open(Ts... as, va_separator, va_list va)
 
     return redirect_n<R, FUNC_NAME, REDIRECT_PATH_TYPE, PATH_IDX, Ts..., mode_t>(as..., mode);
 }
-=======
-{ return func(std::get<I>(params)...); }
-
-template<typename R, template<typename...> class Params, typename... Args>
-inline R call_with_tuple_args(std::function<R(Args...)> const&func, Params<Args...> const&params)
-{ return call_helper(func, params, std::index_sequence_for<Args...>{}); }
-
-struct NORMAL_REDIRECT {
-  static inline char *redirect (const char *path) { return redirect_path (path); }
-};
-
-struct ABSOLUTE_REDIRECT {
-  static inline char *redirect (const char *path) { return redirect_path_if_absolute (path); }
-};
-
-struct TARGET_REDIRECT {
-  static inline char *redirect (const char *path) { return redirect_path_target (path); }
-};
-
-template<typename R, const char *FUNC_NAME, typename REDIRECT_PATH_TYPE, size_t PATH_IDX, typename... Ts>
-inline R
-redirect_n(Ts... as)
-{
-    std::tuple<Ts...> tpl(as...);
-    const char *path = std::get<PATH_IDX>(tpl);
-    char *new_path = REDIRECT_PATH_TYPE::redirect (path);
-    static std::function<R(Ts...)> func (reinterpret_cast<R(*)(Ts...)> (dlsym (RTLD_NEXT, FUNC_NAME)));
-
-    std::get<PATH_IDX>(tpl) = new_path;
-    R result = call_with_tuple_args (func, tpl);
-    std::get<PATH_IDX>(tpl) = path;
-    free (new_path);
-
-    return result;
-}
-
-template<typename R, const char *FUNC_NAME, typename REDIRECT_PATH_TYPE, typename REDIRECT_TARGET_TYPE, typename... Ts>
-inline R
-redirect_target(const char *path, const char *target, Ts... as)
-{
-    char *new_target = REDIRECT_TARGET_TYPE::redirect (target);
-    R result = redirect_n<R, FUNC_NAME, REDIRECT_PATH_TYPE, 0, const char*, const char*, Ts...>(path, new_target);
-    free (new_target);
-    return result;
-}
-
-struct va_separator {};
-template<typename R, const char *FUNC_NAME, typename REDIRECT_PATH_TYPE, size_t PATH_IDX, typename... Ts>
-inline R
-redirect_open(Ts... as, va_separator, va_list va)
-{
-    mode_t mode = 0;
-    int flags = std::get<PATH_IDX+1>(std::tuple<Ts...>(as...));
-
-    if (flags & (O_CREAT|O_TMPFILE)) {
-        mode = va_arg (va, mode_t);
-    }
-
-    return redirect_n<R, FUNC_NAME, REDIRECT_PATH_TYPE, PATH_IDX, Ts..., mode_t>(as..., mode);
-}
 
 } // unnamed namespace
 
