@@ -22,6 +22,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <pwd.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,6 +53,10 @@ static char *saved_snap_name = NULL;
 static size_t saved_snap_name_len = 0;
 static char *saved_snap_revision = NULL;
 static size_t saved_snap_revision_len = 0;
+static char *saved_snap_user_data = NULL;
+static size_t saved_snap_user_data_len = 0;
+static char *saved_snap_user_common = NULL;
+static size_t saved_snap_user_common_len = 0;
 static char saved_snap_devshm[NAME_MAX];
 
 static void constructor() __attribute__((constructor));
@@ -97,6 +102,8 @@ void constructor()
     saved_varlib = getenvdup ("SNAP_DATA", &saved_varlib_len);
     saved_snap_name = getenvdup ("SNAP_NAME", &saved_snap_name_len);
     saved_snap_revision = getenvdup ("SNAP_REVISION", &saved_snap_revision_len);
+    saved_snap_user_data = getenvdup ("SNAP_USER_DATA", &saved_snap_user_data_len);
+    saved_snap_user_common = getenvdup ("SNAP_USER_COMMON", &saved_snap_user_common_len);
 
     if (snprintf(saved_snap_devshm, sizeof saved_snap_devshm, "/dev/shm/snap.%s", saved_snap_name) < 0){
         perror("cannot construct path /dev/shm/snap.$SNAP_NAME");
@@ -178,6 +185,11 @@ redirect_path_full (const char *pathname, int check_parent, int only_if_absolute
         } else {
             return strdup (pathname);
         }
+    }
+
+    if (strncmp (pathname, saved_snap_user_data, saved_snap_user_data_len) == 0 ||
+        strncmp (pathname, saved_snap_user_common, saved_snap_user_common_len) == 0) {
+        return strdup (pathname);
     }
 
     // Some apps want to open shared memory in random locations. Here we will confine it to the
