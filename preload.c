@@ -751,3 +751,47 @@ __execve (const char *path, char *const argv[], char *const envp[])
 {
     return execve_wrapper ("__execve", path, argv, envp);
 }
+
+struct passwd *
+getpwnam (const char *name)
+{
+    struct passwd *ret;
+    struct passwd *(*_getpwnam) (const char *);
+    _getpwnam = (struct passwd *(*) (const char *)) dlsym (RTLD_NEXT, "getpwnam");
+    ret = _getpwnam (name);
+    ret->pw_dir = saved_snap_user_data;
+    return ret;
+}
+
+struct passwd *
+getpwuid (uid_t uid)
+{
+    struct passwd *ret;
+    struct passwd *(*_getpwuid) (uid_t);
+    _getpwuid = (struct passwd *(*) (uid_t)) dlsym (RTLD_NEXT, "getpwuid");
+    ret = getpwuid (uid);
+    ret->pw_dir = saved_snap_user_data;
+    return ret;
+}
+
+int
+getpwnam_r (const char *name, struct passwd *pwd, char *buf, size_t buflen, struct passwd **result)
+{
+    int ret;
+    int (*_getpwnam_r) (const char *name, struct passwd *pwd, char *buf, size_t buflen, struct passwd **result);
+    _getpwnam_r = (int (*) (const char *name, struct passwd *pwd, char *buf, size_t buflen, struct passwd **result)) dlsym (RTLD_NEXT, "getpwnam_r");
+    ret = _getpwnam_r (name, pwd, buf, buflen, result);
+    pwd->pw_dir = saved_snap_user_data;
+    return ret;
+}
+
+int
+getpwuid_r (uid_t uid, struct passwd *pwd, char *buf, size_t buflen, struct passwd **result)
+{
+    int ret;
+    int (*_getpwuid_r) (uid_t uid, struct passwd *pwd, char *buf, size_t buflen, struct passwd **result);
+    _getpwuid_r = (int (*) (uid_t uid, struct passwd *pwd, char *buf, size_t buflen, struct passwd **result)) dlsym (RTLD_NEXT, "getpwuid_r");
+    ret = _getpwuid_r (uid, pwd, buf, buflen, result);
+    pwd->pw_dir = saved_snap_user_data;
+    return ret;
+}
