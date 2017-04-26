@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/inotify.h>
+#include <sys/param.h>
 #include <sys/socket.h>
 #include <sys/statvfs.h>
 #include <sys/un.h>
@@ -124,20 +125,20 @@ static char *
 redirect_writable_path (const char *pathname, const char *basepath)
 {
     char *redirected_pathname;
-    int chop = 0;
 
     if (pathname[0] == 0) {
         return strdup (basepath);
     }
 
+    size_t basepath_len = MIN (strlen (basepath), PATH_MAX);
     redirected_pathname = malloc (PATH_MAX);
 
-    if (basepath[strlen (basepath) - 1] == '/') {
-        chop = 1;
+    if (basepath[basepath_len - 1] == '/') {
+        basepath_len -= 1;
     }
-    strncpy (redirected_pathname, basepath, PATH_MAX - 1 - chop);
+    strncpy (redirected_pathname, basepath, basepath_len);
 
-    strncat (redirected_pathname, pathname, PATH_MAX - 1 - strlen (redirected_pathname));
+    strncat (redirected_pathname, pathname, PATH_MAX - 1 - basepath_len);
 
     return redirected_pathname;
 }
@@ -193,7 +194,8 @@ redirect_path_full (const char *pathname, int check_parent, int only_if_absolute
     if (preload_dir[preload_dir_len - 1] == '/') {
         chop = 1;
     }
-    strncpy (redirected_pathname, preload_dir, PATH_MAX - 1 - chop);
+    strncpy (redirected_pathname, preload_dir, preload_dir_len - chop);
+    redirected_pathname[preload_dir_len - chop - 1] = '\0';
 
     if (pathname[0] != '/') {
         size_t cursize = strlen (redirected_pathname);
