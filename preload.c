@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/inotify.h>
+#include <sys/param.h>
 #include <sys/socket.h>
 #include <sys/statvfs.h>
 #include <sys/un.h>
@@ -124,20 +125,20 @@ static char *
 redirect_writable_path (const char *pathname, const char *basepath)
 {
     char *redirected_pathname;
-    int chop = 0;
 
     if (pathname[0] == 0) {
         return strdup (basepath);
     }
 
+    size_t basepath_len = MIN (strlen (basepath), PATH_MAX);
     redirected_pathname = malloc (PATH_MAX);
 
-    if (basepath[strlen (basepath) - 1] == '/') {
-        chop = 1;
+    if (basepath[basepath_len - 1] == '/') {
+        basepath_len -= 1;
     }
-    strncpy (redirected_pathname, basepath, PATH_MAX - 1 - chop);
+    strncpy (redirected_pathname, basepath, basepath_len);
 
-    strncat (redirected_pathname, pathname, PATH_MAX - 1 - strlen (redirected_pathname));
+    strncat (redirected_pathname, pathname, PATH_MAX - 1 - basepath_len);
 
     return redirected_pathname;
 }
@@ -193,7 +194,8 @@ redirect_path_full (const char *pathname, int check_parent, int only_if_absolute
     if (preload_dir[preload_dir_len - 1] == '/') {
         chop = 1;
     }
-    strncpy (redirected_pathname, preload_dir, PATH_MAX - 1 - chop);
+    strncpy (redirected_pathname, preload_dir, preload_dir_len - chop);
+    redirected_pathname[preload_dir_len - chop - 1] = '\0';
 
     if (pathname[0] != '/') {
         size_t cursize = strlen (redirected_pathname);
@@ -587,16 +589,22 @@ ensure_in_ld_preload (char *ld_preload, const char *to_be_added)
         free (ld_preload_copy);
 
         if (!found) {
-            ld_preload = realloc (ld_preload, strlen (to_be_added) + strlen (ld_preload) + 2);
-            strcat (ld_preload, ":");
-            strcat (ld_preload, to_be_added);
+            size_t ld_preload_len = strlen (ld_preload);
+            size_t to_be_added_len = strlen (to_be_added);
+            size_t new_ld_preload_len = ld_preload_len + to_be_added_len + 2;
+            ld_preload = realloc (ld_preload, new_ld_preload_len);
+            ld_preload[ld_preload_len] = ':';
+            strncpy (ld_preload + ld_preload_len + 1, to_be_added, to_be_added_len);
+            ld_preload[new_ld_preload_len-1] = '\0';
         }
     } else {
-        ld_preload = realloc (ld_preload, strlen (to_be_added) + LD_PRELOAD_LEN + 2);
+        size_t to_be_added_len = strlen (to_be_added);
+        free (ld_preload);
+        ld_preload = malloc (to_be_added_len + LD_PRELOAD_LEN + 2);
         strncpy (ld_preload, LD_PRELOAD "=", LD_PRELOAD_LEN + 1);
-        strcat (ld_preload, to_be_added);
+        strncpy (ld_preload + LITERAL_STRLEN (LD_PRELOAD) + 1, to_be_added, to_be_added_len);
+        ld_preload[to_be_added_len-1] = '\0';
     }
-
     return ld_preload;
 }
 
@@ -632,9 +640,11 @@ execve_copy_envp (char *const envp[])
     }
 
     if (saved_snapcraft_preload) {
-        snapcraft_preload = malloc (saved_snapcraft_preload_len + LITERAL_STRLEN (SNAPCRAFT_PRELOAD) + 2);
+        size_t preload_len = saved_snapcraft_preload_len + LITERAL_STRLEN (SNAPCRAFT_PRELOAD) + 2;
+        snapcraft_preload = malloc (preload_len);
         strncpy (snapcraft_preload, SNAPCRAFT_PRELOAD "=", LITERAL_STRLEN (SNAPCRAFT_PRELOAD) + 1);
-        strncat (snapcraft_preload, saved_snapcraft_preload, saved_snapcraft_preload_len);
+        strncpy (snapcraft_preload + LITERAL_STRLEN (SNAPCRAFT_PRELOAD) + 1, saved_snapcraft_preload, saved_snapcraft_preload_len);
+        snapcraft_preload[preload_len-1] = '\0';
         new_envp[i++] = snapcraft_preload;
     }
 
