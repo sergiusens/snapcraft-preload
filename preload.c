@@ -22,6 +22,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <pwd.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -53,6 +54,10 @@ static char *saved_snap_name = NULL;
 static size_t saved_snap_name_len = 0;
 static char *saved_snap_revision = NULL;
 static size_t saved_snap_revision_len = 0;
+static char *saved_snap_user_data = NULL;
+static size_t saved_snap_user_data_len = 0;
+static char *saved_snap_user_common = NULL;
+static size_t saved_snap_user_common_len = 0;
 static char saved_snap_devshm[NAME_MAX];
 
 static void constructor() __attribute__((constructor));
@@ -98,6 +103,8 @@ void constructor()
     saved_varlib = getenvdup ("SNAP_DATA", &saved_varlib_len);
     saved_snap_name = getenvdup ("SNAP_NAME", &saved_snap_name_len);
     saved_snap_revision = getenvdup ("SNAP_REVISION", &saved_snap_revision_len);
+    saved_snap_user_data = getenvdup ("SNAP_USER_DATA", &saved_snap_user_data_len);
+    saved_snap_user_common = getenvdup ("SNAP_USER_COMMON", &saved_snap_user_common_len);
 
     if (snprintf(saved_snap_devshm, sizeof saved_snap_devshm, "/dev/shm/snap.%s", saved_snap_name) < 0){
         perror("cannot construct path /dev/shm/snap.$SNAP_NAME");
@@ -178,6 +185,11 @@ redirect_path_full (const char *pathname, int check_parent, int only_if_absolute
         } else {
             return strdup (pathname);
         }
+    }
+
+    if (strncmp (pathname, saved_snap_user_data, saved_snap_user_data_len) == 0 ||
+        strncmp (pathname, saved_snap_user_common, saved_snap_user_common_len) == 0) {
+        return strdup (pathname);
     }
 
     // Some apps want to open shared memory in random locations. Here we will confine it to the
@@ -747,4 +759,48 @@ int
 __execve (const char *path, char *const argv[], char *const envp[])
 {
     return execve_wrapper ("__execve", path, argv, envp);
+}
+
+struct passwd *
+getpwnam (const char *name)
+{
+    struct passwd *ret;
+    struct passwd *(*_getpwnam) (const char *);
+    _getpwnam = (struct passwd *(*) (const char *)) dlsym (RTLD_NEXT, "getpwnam");
+    ret = _getpwnam (name);
+    ret->pw_dir = saved_snap_user_data;
+    return ret;
+}
+
+struct passwd *
+getpwuid (uid_t uid)
+{
+    struct passwd *ret;
+    struct passwd *(*_getpwuid) (uid_t);
+    _getpwuid = (struct passwd *(*) (uid_t)) dlsym (RTLD_NEXT, "getpwuid");
+    ret = getpwuid (uid);
+    ret->pw_dir = saved_snap_user_data;
+    return ret;
+}
+
+int
+getpwnam_r (const char *name, struct passwd *pwd, char *buf, size_t buflen, struct passwd **result)
+{
+    int ret;
+    int (*_getpwnam_r) (const char *name, struct passwd *pwd, char *buf, size_t buflen, struct passwd **result);
+    _getpwnam_r = (int (*) (const char *name, struct passwd *pwd, char *buf, size_t buflen, struct passwd **result)) dlsym (RTLD_NEXT, "getpwnam_r");
+    ret = _getpwnam_r (name, pwd, buf, buflen, result);
+    pwd->pw_dir = saved_snap_user_data;
+    return ret;
+}
+
+int
+getpwuid_r (uid_t uid, struct passwd *pwd, char *buf, size_t buflen, struct passwd **result)
+{
+    int ret;
+    int (*_getpwuid_r) (uid_t uid, struct passwd *pwd, char *buf, size_t buflen, struct passwd **result);
+    _getpwuid_r = (int (*) (uid_t uid, struct passwd *pwd, char *buf, size_t buflen, struct passwd **result)) dlsym (RTLD_NEXT, "getpwuid_r");
+    ret = _getpwuid_r (uid, pwd, buf, buflen, result);
+    pwd->pw_dir = saved_snap_user_data;
+    return ret;
 }
