@@ -149,7 +149,6 @@ redirect_path_full (const char *pathname, int check_parent, int only_if_absolute
     int (*_access) (const char *pathname, int mode);
     char *redirected_pathname;
     int ret;
-    int chop = 0;
     char *slash = 0;
 
     if (pathname == NULL) {
@@ -157,7 +156,7 @@ redirect_path_full (const char *pathname, int check_parent, int only_if_absolute
     }
 
     const char *preload_dir = saved_snapcraft_preload;
-    const size_t preload_dir_len = saved_snapcraft_preload_len;
+    size_t preload_dir_len = MIN (PATH_MAX, saved_snapcraft_preload_len);
 
     if (preload_dir == NULL) {
         return strdup (pathname);
@@ -192,10 +191,10 @@ redirect_path_full (const char *pathname, int check_parent, int only_if_absolute
     }
 
     if (preload_dir[preload_dir_len - 1] == '/') {
-        chop = 1;
+        preload_dir_len -= 1;
     }
-    strncpy (redirected_pathname, preload_dir, preload_dir_len - chop);
-    redirected_pathname[preload_dir_len - chop - 1] = '\0';
+    strncpy (redirected_pathname, preload_dir, preload_dir_len);
+    redirected_pathname[preload_dir_len] = '\0';
 
     if (pathname[0] != '/') {
         size_t cursize = strlen (redirected_pathname);
