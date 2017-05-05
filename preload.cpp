@@ -145,7 +145,7 @@ redirect_writable_path (const char *pathname, const char *basepath)
         return strdup (basepath);
     }
 
-    size_t basepath_len = MIN (strlen (basepath), PATH_MAX);
+    size_t basepath_len = MIN (strlen (basepath), PATH_MAX - 1);
     redirected_pathname = static_cast<char *> (malloc (PATH_MAX));
 
     if (basepath[basepath_len - 1] == '/') {
@@ -172,7 +172,7 @@ redirect_path_full (const char *pathname, bool check_parent, bool only_if_absolu
     }
 
     const char *preload_dir = saved_snapcraft_preload;
-    size_t preload_dir_len = MIN (PATH_MAX, saved_snapcraft_preload_len);
+    size_t preload_dir_len = MIN (PATH_MAX - 1, saved_snapcraft_preload_len);
 
     if (preload_dir == NULL) {
         return strdup (pathname);
