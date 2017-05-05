@@ -145,7 +145,7 @@ redirect_writable_path (const char *pathname, const char *basepath)
         return strdup (basepath);
     }
 
-    size_t basepath_len = MIN (strlen (basepath), PATH_MAX);
+    size_t basepath_len = MIN (strlen (basepath), PATH_MAX - 1);
     redirected_pathname = static_cast<char *> (malloc (PATH_MAX));
 
     if (basepath[basepath_len - 1] == '/') {
