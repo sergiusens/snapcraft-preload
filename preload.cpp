@@ -471,9 +471,10 @@ socket_action (socket_action_t action, int sockfd, const struct sockaddr *addr, 
         result = action (sockfd, addr, addrlen);
     } else {
         struct sockaddr_un new_addr = {0};
+        size_t new_path_len = MIN (strlen (new_path), PATH_MAX - 1);
         new_addr.sun_family = AF_UNIX;
-        new_addr.sun_path[0] = '\0';
-        strncat (new_addr.sun_path, new_path, PATH_MAX - 1);
+        strncpy (new_addr.sun_path, new_path, new_path_len);
+        new_addr.sun_path[new_path_len] = '\0';
         result = action (sockfd, (const struct sockaddr *) &new_addr, sizeof (new_addr));
     }
 
