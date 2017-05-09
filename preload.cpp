@@ -49,6 +49,10 @@
 #define SNAPCRAFT_PRELOAD "SNAPCRAFT_PRELOAD"
 
 namespace {
+const std::string LD_LINUX = "/lib/ld-linux.so.2";
+const std::string DEFAULT_VARLIB = "/var/lib";
+const std::string DEFAULT_DEVSHM = "/dev/shm/";
+
 char **saved_ld_preloads = NULL;
 size_t num_saved_ld_preloads = 0;
 char *saved_snapcraft_preload = NULL;
@@ -188,9 +192,9 @@ redirect_path_full (std::string const& pathname, bool check_parent, bool only_if
     // to support reading the base system's files if they exist, else let the app
     // play in /var/lib themselves.  So we reverse the normal check: first see if
     // it exists in root, else do our redirection.
-    if (pathname == "/var/lib" || pathname.compare (0, 9, "/var/lib/") == 0) {
-        if (saved_varlib && pathname.compare (0, saved_varlib_len, saved_varlib) != 0 && _access (pathname.c_str (), F_OK) != 0) {
-            return redirect_writable_path (pathname.data () + 8, saved_varlib);
+    if (pathname == DEFAULT_VARLIB || pathname.compare (0, DEFAULT_VARLIB.size () + 1, DEFAULT_VARLIB + '/') == 0) {
+        if (saved_varlib && pathname.compare (0, saved_varlib_len, saved_varlib) != 0 && _access (pathname.c_str(), F_OK) != 0) {
+            return redirect_writable_path (pathname.data () + DEFAULT_VARLIB.size (), saved_varlib);
         } else {
             return pathname;
         }
@@ -200,7 +204,7 @@ redirect_path_full (std::string const& pathname, bool check_parent, bool only_if
     // snaps allowed path.
     std::string redirected_pathname;
 
-    if (pathname.compare (0, 9, "/dev/shm/") == 0) {
+    if (pathname.compare (0, DEFAULT_DEVSHM.size (), DEFAULT_DEVSHM) == 0) {
         redirected_pathname = saved_snap_devshm + '.' + pathname;
         string_length_sanitize (redirected_pathname);
         return redirected_pathname;
@@ -214,7 +218,7 @@ redirect_path_full (std::string const& pathname, bool check_parent, bool only_if
     if (pathname[0] != '/') {
         std::string cwd;
         cwd.reserve(PATH_MAX);
-        if (getcwd (const_cast<char*>(cwd.data()), PATH_MAX) == NULL) {
+        if (getcwd (const_cast<char*>(cwd.data ()), PATH_MAX) == NULL) {
             return pathname;
         }
 
@@ -590,8 +594,8 @@ execve32_wrapper (int (*_execve) (const char *path, char *const argv[], char *co
     char **new_argv;
     int i, num_elements, result;
 
-    std::string const& custom_loader = redirect_path ("/lib/ld-linux.so.2");
-    if (custom_loader == "/lib/ld-linux.so.2") {
+    std::string const& custom_loader = redirect_path (LD_LINUX);
+    if (custom_loader == LD_LINUX) {
         return 0;
     }
 
