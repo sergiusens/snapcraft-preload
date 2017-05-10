@@ -476,7 +476,9 @@ connect (int sockfd, const struct sockaddr *addr, socklen_t addrlen)
     return socket_action (_connect, sockfd, addr, addrlen);
 }
 
-static void
+namespace
+{
+void
 ensure_in_ld_preload (std::string& ld_preload, const std::string& to_be_added)
 {
     if (!ld_preload.empty ()) {
@@ -498,23 +500,11 @@ ensure_in_ld_preload (std::string& ld_preload, const std::string& to_be_added)
     }
 }
 
-struct char_ptr {
-    char_ptr () : ptr_(nullptr) {}
-    char_ptr (std::string const& str) : ptr_(strdup (str.c_str ())) {}
-    char_ptr (const char *str) : ptr_(strdup (str)) {}
-    ~char_ptr () { free (ptr_); }
-    operator char* () const { return ptr_; }
-    operator const char* () const { return ptr_; }
-
-private:
-    char *ptr_ = nullptr;
-};
-
-static std::vector<char_ptr>
+std::vector<std::string>
 execve_copy_envp (char *const envp[])
 {
     std::string ld_preload;
-    std::vector<char_ptr> new_envp;
+    std::vector<std::string> new_envp;
 
     for (unsigned i = 0; envp && envp[i]; ++i) {
         std::string env(envp[i]);
@@ -536,11 +526,10 @@ execve_copy_envp (char *const envp[])
         new_envp.push_back (snapcraft_preload);
     }
 
-    new_envp.push_back(char_ptr());
     return new_envp;
 }
 
-static int
+int
 execve32_wrapper (int (*_execve) (const char *path, char *const argv[], char *const envp[]), const char *path, char *const argv[], char *const envp[])
 {
     char **new_argv;
@@ -570,7 +559,7 @@ execve32_wrapper (int (*_execve) (const char *path, char *const argv[], char *co
     return result;
 }
 
-static int
+int
 execve_wrapper (const char *func, const char *path, char *const argv[], char *const envp[])
 {
     int i, result;
@@ -587,9 +576,13 @@ execve_wrapper (const char *func, const char *path, char *const argv[], char *co
     // Make sure we inject our original preload values, can't trust this
     // program to pass them along in envp for us.
     auto new_envp_vector = execve_copy_envp (envp);
-    auto new_envp = reinterpret_cast<char* const*> (new_envp_vector.data ());
+    std::vector<char*> new_envp;
+    for (auto const& env : new_envp_vector) {
+        new_envp.push_back (const_cast<char *>(env.c_str ()));
+    }
+    new_envp.push_back (nullptr);
 
-    result = _execve (new_path.c_str (), argv, new_envp);
+    result = _execve (new_path.c_str (), argv, new_envp.data ());
 
     if (result == -1 && errno == ENOENT) {
         // OK, get prepared for gross hacks here.  In order to run 32-bit ELF
@@ -605,12 +598,14 @@ execve_wrapper (const char *func, const char *path, char *const argv[], char *co
             // means the ENOENT must have been a missing linked library or the
             // wrong ld.so loader.  Lets assume the latter and try to run as
             // a 32-bit executable.
-            result = execve32_wrapper (_execve, new_path.c_str (), argv, new_envp);
+            result = execve32_wrapper (_execve, new_path.c_str (), argv, new_envp.data ());
         }
     }
 
     return result;
 }
+
+} // anonymous namepsace
 
 extern "C" int
 execv (const char *path, char *const argv[])
