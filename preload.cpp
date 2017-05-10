@@ -27,6 +27,7 @@
 #include <fcntl.h>
 #include <functional>
 #include <iostream>
+#include <sstream>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,33 +38,37 @@
 #include <sys/statvfs.h>
 #include <sys/un.h>
 #include <sys/vfs.h>
+#include <vector>
 #include <unistd.h>
 
-#ifndef SNAPCRAFT_LIBNAME
-#define SNAPCRAFT_LIBNAME "snapcraft-preload.so"
+#ifndef SNAPCRAFT_LIBNAME_DEF
+#define SNAPCRAFT_LIBNAME_DEF "libsnapcraft-preload.so"
 #endif
 
 #define LITERAL_STRLEN(s) (sizeof (s) - 1)
-#define LD_PRELOAD "LD_PRELOAD"
-#define LD_PRELOAD_LEN LITERAL_STRLEN (LD_PRELOAD)
-#define SNAPCRAFT_PRELOAD "SNAPCRAFT_PRELOAD"
 
-namespace {
+// We need to define these twice as const strings aren't available in the ctr
+#define LD_PRELOAD_DEF "LD_PRELOAD"
+#define SNAPCRAFT_PRELOAD_DEF "SNAPCRAFT_PRELOAD"
+#define DEFAULT_VARLIB_DEF "/dev/shm/"
+
+namespace
+{
+const std::string SNAPCRAFT_LIBNAME = SNAPCRAFT_LIBNAME_DEF;
+const std::string SNAPCRAFT_PRELOAD = SNAPCRAFT_PRELOAD_DEF;
+const std::string LD_PRELOAD = "LD_PRELOAD";
 const std::string LD_LINUX = "/lib/ld-linux.so.2";
 const std::string DEFAULT_VARLIB = "/var/lib";
 const std::string DEFAULT_DEVSHM = "/dev/shm/";
 
+std::string saved_snapcraft_preload;
+std::string saved_varlib;
+std::string saved_snap_name;
+std::string saved_snap_revision;
+std::string saved_snap_devshm;
+
 char **saved_ld_preloads = NULL;
 size_t num_saved_ld_preloads = 0;
-char *saved_snapcraft_preload = NULL;
-size_t saved_snapcraft_preload_len = 0;
-char *saved_varlib = NULL;
-size_t saved_varlib_len = 0;
-char *saved_snap_name = NULL;
-size_t saved_snap_name_len = 0;
-char *saved_snap_revision = NULL;
-size_t saved_snap_revision_len = 0;
-char saved_snap_devshm[NAME_MAX];
 
 int (*_access) (const char *, int) = NULL;
 
@@ -71,74 +76,54 @@ template <typename dirent_t>
 using filter_function_t = int (*)(const dirent_t *);
 template <typename dirent_t>
 using compar_function_t = int (*)(const dirent_t **, const dirent_t **);
+
+inline std::string
+getenv_string(const std::string& varname)
+{
+    char *envvar = secure_getenv (varname.c_str());
+    return envvar ? envvar : "";
+}
+
 } // unnamed namespace
 
 static void constructor() __attribute__((constructor));
 
-static char *
-getenvdup (const char *varname, size_t *envlen)
+void
+constructor()
 {
-    char *envvar = secure_getenv (varname);
-    if (envvar == NULL || envvar[0] == 0) { // identical for our purposes
-        if (envlen) {
-            *envlen = 0;
-        }
-        return NULL;
-    }
-    else {
-        if (envlen) {
-            *envlen = strlen (envvar);
-            return strndup (envvar, *envlen);
-        }
-
-        return strdup (envvar);
-    }
-}
-
-void constructor()
-{
-    char *ld_preload_copy, *p, *savedptr = NULL;
-    size_t libnamelen;
-
     _access = (decltype(_access)) dlsym (RTLD_NEXT, "access");
 
     // We need to save LD_PRELOAD and SNAPCRAFT_PRELOAD in case we need to
     // propagate the values to an exec'd program.
-    ld_preload_copy = getenvdup (LD_PRELOAD, NULL);
-    if (ld_preload_copy == NULL) {
+    std::string const& ld_preload = getenv_string (LD_PRELOAD_DEF);
+    if (ld_preload.empty ()) {
         return;
     }
 
-    saved_snapcraft_preload = getenvdup (SNAPCRAFT_PRELOAD, &saved_snapcraft_preload_len);
-    if (saved_snapcraft_preload == NULL) {
-        free (ld_preload_copy);
+    saved_snapcraft_preload = getenv_string (SNAPCRAFT_PRELOAD_DEF);
+    if (saved_snapcraft_preload.empty ()) {
         return;
     }
 
-    saved_varlib = getenvdup ("SNAP_DATA", &saved_varlib_len);
-    saved_snap_name = getenvdup ("SNAP_NAME", &saved_snap_name_len);
-    saved_snap_revision = getenvdup ("SNAP_REVISION", &saved_snap_revision_len);
-
-    if (snprintf(saved_snap_devshm, sizeof saved_snap_devshm, "/dev/shm/snap.%s", saved_snap_name) < 0){
-        perror("cannot construct path /dev/shm/snap.$SNAP_NAME");
-    }
+    saved_varlib = getenv_string ("SNAP_DATA");
+    saved_snap_name = getenv_string ("SNAP_NAME");
+    saved_snap_revision = getenv_string ("SNAP_REVISION");
+    saved_snap_devshm = DEFAULT_VARLIB_DEF "/snap." + saved_snap_name;
 
     // Pull out each absolute-pathed libsnapcraft-preload.so we find.  Better to
     // accidentally include some other libsnapcraft-preload than not propagate
     // ourselves.
-    libnamelen = LITERAL_STRLEN (SNAPCRAFT_LIBNAME);
-    for (p = strtok_r (ld_preload_copy, " :", &savedptr);
-         p;
-         p = strtok_r (NULL, " :", &savedptr)) {
-        size_t plen = strlen (p);
-        if (plen > libnamelen && p[0] == '/' && strncmp (p + plen - libnamelen - 1, "/" SNAPCRAFT_LIBNAME, libnamelen + 1) == 0) {
+    std::string p;
+    std::istringstream ss (ld_preload);
+    size_t libnamelen = LITERAL_STRLEN (SNAPCRAFT_LIBNAME_DEF);
+    while (std::getline (ss, p, ':')) {
+        if (p.size () > libnamelen && p[0] == '/' && p.compare (p.size () - libnamelen - 1, libnamelen + 1, "/" SNAPCRAFT_LIBNAME_DEF) == 0) {
             ++num_saved_ld_preloads;
             saved_ld_preloads = static_cast<char **>(realloc (saved_ld_preloads, (num_saved_ld_preloads + 1) * sizeof (char *)));
-            saved_ld_preloads[num_saved_ld_preloads - 1] = strdup (p);
+            saved_ld_preloads[num_saved_ld_preloads - 1] = strdup (p.c_str ());
             saved_ld_preloads[num_saved_ld_preloads] = NULL;
         }
     }
-    free (ld_preload_copy);
 }
 
 namespace
@@ -179,8 +164,8 @@ redirect_path_full (std::string const& pathname, bool check_parent, bool only_if
         return pathname;
     }
 
-    char *preload_dir = saved_snapcraft_preload;
-    if (preload_dir == NULL) {
+    const std::string& preload_dir = saved_snapcraft_preload;
+    if (preload_dir.empty()) {
         return pathname;
     }
 
@@ -193,7 +178,7 @@ redirect_path_full (std::string const& pathname, bool check_parent, bool only_if
     // play in /var/lib themselves.  So we reverse the normal check: first see if
     // it exists in root, else do our redirection.
     if (pathname == DEFAULT_VARLIB || pathname.compare (0, DEFAULT_VARLIB.size () + 1, DEFAULT_VARLIB + '/') == 0) {
-        if (saved_varlib && pathname.compare (0, saved_varlib_len, saved_varlib) != 0 && _access (pathname.c_str(), F_OK) != 0) {
+        if (!saved_varlib.empty () && pathname.compare (0, saved_varlib.size (), saved_varlib) != 0 && _access (pathname.c_str(), F_OK) != 0) {
             return redirect_writable_path (pathname.data () + DEFAULT_VARLIB.size (), saved_varlib);
         } else {
             return pathname;
@@ -514,7 +499,7 @@ ensure_in_ld_preload (char *ld_preload, const char *to_be_added)
 
         // Check if we are already in LD_PRELOAD and thus can bail
         ld_preload_copy = strdup (ld_preload);
-        for (p = strtok_r (ld_preload_copy + LD_PRELOAD_LEN + 1, " :", &savedptr);
+        for (p = strtok_r (ld_preload_copy + LD_PRELOAD.size () + 1, " :", &savedptr);
              p;
              p = strtok_r (NULL, " :", &savedptr)) {
             if (strcmp (p, to_be_added) == 0) {
@@ -536,9 +521,9 @@ ensure_in_ld_preload (char *ld_preload, const char *to_be_added)
     } else {
         size_t to_be_added_len = strlen (to_be_added);
         free (ld_preload);
-        ld_preload = static_cast<char *> (malloc (to_be_added_len + LD_PRELOAD_LEN + 2));
-        strncpy (ld_preload, LD_PRELOAD "=", LD_PRELOAD_LEN + 1);
-        strncpy (ld_preload + LITERAL_STRLEN (LD_PRELOAD) + 1, to_be_added, to_be_added_len);
+        ld_preload = static_cast<char *> (malloc (to_be_added_len + LD_PRELOAD.size () + 2));
+        strncpy (ld_preload, (LD_PRELOAD + '=').c_str (), LD_PRELOAD.size () + 1);
+        strncpy (ld_preload + LD_PRELOAD.size () + 1, to_be_added, to_be_added_len);
         ld_preload[to_be_added_len-1] = '\0';
     }
     return ld_preload;
@@ -560,7 +545,7 @@ execve_copy_envp (char *const envp[])
 
     for (i = 0; i < num_elements; i++) {
         new_envp[i] = strdup (envp[i]);
-        if (strncmp (envp[i], LD_PRELOAD "=", LD_PRELOAD_LEN + 1) == 0) {
+        if (strncmp (envp[i], (LD_PRELOAD + '=').c_str (), LD_PRELOAD.size () + 1) == 0) {
             ld_preload = new_envp[i]; // point at last defined LD_PRELOAD
         }
     }
@@ -575,11 +560,11 @@ execve_copy_envp (char *const envp[])
         new_envp[i++] = ld_preload_copy;
     }
 
-    if (saved_snapcraft_preload) {
-        size_t preload_len = saved_snapcraft_preload_len + LITERAL_STRLEN (SNAPCRAFT_PRELOAD) + 2;
+    if (!saved_snapcraft_preload.empty ()) {
+        size_t preload_len = saved_snapcraft_preload.size () + SNAPCRAFT_PRELOAD.size () + 2;
         snapcraft_preload = static_cast<char *> (malloc (preload_len));
-        strncpy (snapcraft_preload, SNAPCRAFT_PRELOAD "=", LITERAL_STRLEN (SNAPCRAFT_PRELOAD) + 1);
-        strncpy (snapcraft_preload + LITERAL_STRLEN (SNAPCRAFT_PRELOAD) + 1, saved_snapcraft_preload, saved_snapcraft_preload_len);
+        strncpy (snapcraft_preload, (SNAPCRAFT_PRELOAD + '=').c_str (), SNAPCRAFT_PRELOAD.size () + 1);
+        strncpy (snapcraft_preload + SNAPCRAFT_PRELOAD.size () + 1, saved_snapcraft_preload.c_str (), saved_snapcraft_preload.size ());
         snapcraft_preload[preload_len-1] = '\0';
         new_envp[i++] = snapcraft_preload;
     }
