@@ -530,11 +530,21 @@ execve_copy_envp (char *const envp[])
     return new_envp;
 }
 
-int
-execve32_wrapper (execve_t _execve, const char *path, char *const argv[], char *const envp[])
+struct c_vector_holder
 {
-    char **new_argv;
-    int i, num_elements, result;
+    c_vector_holder(const std::vector<std::string>& str_vector) {
+        for (auto const& str : str_vector) {
+            holder_.push_back (str.c_str ());
+        }
+        holder_.push_back (nullptr);
+    }
+
+    operator const char **() { return holder_.data (); }
+    operator char* const*() { return (char* const*) holder_.data (); }
+
+    private:
+    std::vector<const char*> holder_;
+};
 
     std::string const& custom_loader = redirect_path (LD_LINUX);
     if (custom_loader == LD_LINUX) {
@@ -575,14 +585,9 @@ execve_wrapper (const char *func, const char *path, char *const argv[], char *co
 
     // Make sure we inject our original preload values, can't trust this
     // program to pass them along in envp for us.
-    auto new_envp_vector = execve_copy_envp (envp);
-    std::vector<char*> new_envp;
-    for (auto const& env : new_envp_vector) {
-        new_envp.push_back (const_cast<char *>(env.c_str ()));
-    }
-    new_envp.push_back (nullptr);
-
-    result = _execve (new_path.c_str (), argv, new_envp.data ());
+    auto env_copy = execve_copy_envp (envp);
+    c_vector_holder new_envp (env_copy);
+    result = _execve (new_path.c_str (), argv, new_envp);
 
     if (result == -1 && errno == ENOENT) {
         // OK, get prepared for gross hacks here.  In order to run 32-bit ELF
@@ -598,7 +603,7 @@ execve_wrapper (const char *func, const char *path, char *const argv[], char *co
             // means the ENOENT must have been a missing linked library or the
             // wrong ld.so loader.  Lets assume the latter and try to run as
             // a 32-bit executable.
-            result = execve32_wrapper (_execve, new_path.c_str (), argv, c_vector_holder(new_envp_vector));
+            result = execve32_wrapper (_execve, new_path, argv, new_envp);
         }
     }
 
