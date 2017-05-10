@@ -498,15 +498,27 @@ ensure_in_ld_preload (std::string& ld_preload, const std::string& to_be_added)
     }
 }
 
-static std::vector<char *>
+struct char_ptr {
+    char_ptr () : ptr_(nullptr) {}
+    char_ptr (std::string const& str) : ptr_(strdup (str.c_str ())) {}
+    char_ptr (const char *str) : ptr_(strdup (str)) {}
+    ~char_ptr () { free (ptr_); }
+    operator char* () const { return ptr_; }
+    operator const char* () const { return ptr_; }
+
+private:
+    char *ptr_ = nullptr;
+};
+
+static std::vector<char_ptr>
 execve_copy_envp (char *const envp[])
 {
     std::string ld_preload;
-    std::vector<char *> new_envp;
+    std::vector<char_ptr> new_envp;
 
     for (unsigned i = 0; envp && envp[i]; ++i) {
         std::string env(envp[i]);
-        new_envp.push_back (strdup (env.c_str ()));
+        new_envp.push_back (env);
 
         if (env.compare (0, LD_PRELOAD.size () + 1, LD_PRELOAD + '=') == 0) {
             ld_preload = env; // point at last defined LD_PRELOAD index
@@ -517,14 +529,14 @@ execve_copy_envp (char *const envp[])
         ensure_in_ld_preload (ld_preload, saved_preload);
 
     if (!saved_ld_preloads.empty ())
-        new_envp.push_back (strdup (ld_preload.c_str()));
+        new_envp.push_back (ld_preload);
 
     if (!saved_snapcraft_preload.empty ()) {
         auto snapcraft_preload = SNAPCRAFT_PRELOAD + '=' + saved_snapcraft_preload;
-        new_envp.push_back (strdup (snapcraft_preload.c_str ()));
+        new_envp.push_back (snapcraft_preload);
     }
 
-    new_envp.push_back(nullptr);
+    new_envp.push_back(char_ptr());
     return new_envp;
 }
 
@@ -574,9 +586,10 @@ execve_wrapper (const char *func, const char *path, char *const argv[], char *co
 
     // Make sure we inject our original preload values, can't trust this
     // program to pass them along in envp for us.
-    auto new_envp = execve_copy_envp (envp);
+    auto new_envp_vector = execve_copy_envp (envp);
+    auto new_envp = reinterpret_cast<char* const*> (new_envp_vector.data ());
 
-    result = _execve (new_path.c_str (), argv, new_envp.data ());
+    result = _execve (new_path.c_str (), argv, new_envp);
 
     if (result == -1 && errno == ENOENT) {
         // OK, get prepared for gross hacks here.  In order to run 32-bit ELF
@@ -592,12 +605,9 @@ execve_wrapper (const char *func, const char *path, char *const argv[], char *co
             // means the ENOENT must have been a missing linked library or the
             // wrong ld.so loader.  Lets assume the latter and try to run as
             // a 32-bit executable.
-            result = execve32_wrapper (_execve, new_path.c_str (), argv, new_envp.data ());
+            result = execve32_wrapper (_execve, new_path.c_str (), argv, new_envp);
         }
     }
-
-    for (char *envp : new_envp)
-        free (envp);
 
     return result;
 }
