@@ -47,15 +47,10 @@
 
 #define LITERAL_STRLEN(s) (sizeof (s) - 1)
 
-// We need to define these twice as const strings aren't available in the ctr
-#define LD_PRELOAD_DEF "LD_PRELOAD"
-#define SNAPCRAFT_PRELOAD_DEF "SNAPCRAFT_PRELOAD"
-#define DEFAULT_VARLIB_DEF "/dev/shm/"
-
 namespace
 {
 const std::string SNAPCRAFT_LIBNAME = SNAPCRAFT_LIBNAME_DEF;
-const std::string SNAPCRAFT_PRELOAD = SNAPCRAFT_PRELOAD_DEF;
+const std::string SNAPCRAFT_PRELOAD = "SNAPCRAFT_PRELOAD";
 const std::string LD_PRELOAD = "LD_PRELOAD";
 const std::string LD_LINUX = "/lib/ld-linux.so.2";
 const std::string DEFAULT_VARLIB = "/var/lib";
@@ -77,6 +72,8 @@ using filter_function_t = int (*)(const dirent_t *);
 template <typename dirent_t>
 using compar_function_t = int (*)(const dirent_t **, const dirent_t **);
 
+using socket_action_t = int (*) (int, const struct sockaddr *, socklen_t);
+
 inline std::string
 getenv_string(const std::string& varname)
 {
@@ -84,23 +81,21 @@ getenv_string(const std::string& varname)
     return envvar ? envvar : "";
 }
 
-} // unnamed namespace
+struct Initializer { Initializer (); };
+static Initializer initalizer;
 
-static void constructor() __attribute__((constructor));
-
-void
-constructor()
+Initializer::Initializer()
 {
     _access = (decltype(_access)) dlsym (RTLD_NEXT, "access");
 
     // We need to save LD_PRELOAD and SNAPCRAFT_PRELOAD in case we need to
     // propagate the values to an exec'd program.
-    std::string const& ld_preload = getenv_string (LD_PRELOAD_DEF);
+    std::string const& ld_preload = getenv_string (LD_PRELOAD);
     if (ld_preload.empty ()) {
         return;
     }
 
-    saved_snapcraft_preload = getenv_string (SNAPCRAFT_PRELOAD_DEF);
+    saved_snapcraft_preload = getenv_string (SNAPCRAFT_PRELOAD);
     if (saved_snapcraft_preload.empty ()) {
         return;
     }
@@ -108,14 +103,14 @@ constructor()
     saved_varlib = getenv_string ("SNAP_DATA");
     saved_snap_name = getenv_string ("SNAP_NAME");
     saved_snap_revision = getenv_string ("SNAP_REVISION");
-    saved_snap_devshm = DEFAULT_VARLIB_DEF "/snap." + saved_snap_name;
+    saved_snap_devshm = DEFAULT_DEVSHM + "/snap." + saved_snap_name;
 
     // Pull out each absolute-pathed libsnapcraft-preload.so we find.  Better to
     // accidentally include some other libsnapcraft-preload than not propagate
     // ourselves.
     std::string p;
     std::istringstream ss (ld_preload);
-    size_t libnamelen = LITERAL_STRLEN (SNAPCRAFT_LIBNAME_DEF);
+    size_t libnamelen = SNAPCRAFT_LIBNAME.size ();
     while (std::getline (ss, p, ':')) {
         if (p.size () > libnamelen && p[0] == '/' && p.compare (p.size () - libnamelen - 1, libnamelen + 1, "/" SNAPCRAFT_LIBNAME_DEF) == 0) {
             ++num_saved_ld_preloads;
@@ -126,8 +121,6 @@ constructor()
     }
 }
 
-namespace
-{
 inline void
 string_length_sanitize(std::string& path)
 {
@@ -438,8 +431,6 @@ REDIRECT_2_5_AT(int, scandirat64, int, struct dirent64 ***, filter_function_t<st
 // a whole lookup algorithm
 REDIRECT_1_2_AT(void *, dlopen, int);
 }
-
-using socket_action_t = int (*) (int, const struct sockaddr *, socklen_t);
 
 static int
 socket_action (socket_action_t action, int sockfd, const struct sockaddr *addr, socklen_t addrlen)
