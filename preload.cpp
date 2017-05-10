@@ -62,8 +62,7 @@ std::string saved_snap_name;
 std::string saved_snap_revision;
 std::string saved_snap_devshm;
 
-char **saved_ld_preloads = NULL;
-size_t num_saved_ld_preloads = 0;
+std::vector<std::string> saved_ld_preloads;
 
 int (*_access) (const char *, int) = NULL;
 
@@ -113,10 +112,7 @@ Initializer::Initializer()
     size_t libnamelen = SNAPCRAFT_LIBNAME.size ();
     while (std::getline (ss, p, ':')) {
         if (p.size () > libnamelen && p[0] == '/' && p.compare (p.size () - libnamelen - 1, libnamelen + 1, "/" SNAPCRAFT_LIBNAME_DEF) == 0) {
-            ++num_saved_ld_preloads;
-            saved_ld_preloads = static_cast<char **>(realloc (saved_ld_preloads, (num_saved_ld_preloads + 1) * sizeof (char *)));
-            saved_ld_preloads[num_saved_ld_preloads - 1] = strdup (p.c_str ());
-            saved_ld_preloads[num_saved_ld_preloads] = NULL;
+            saved_ld_preloads.push_back (p);
         }
     }
 }
@@ -480,87 +476,55 @@ connect (int sockfd, const struct sockaddr *addr, socklen_t addrlen)
     return socket_action (_connect, sockfd, addr, addrlen);
 }
 
-static char *
-ensure_in_ld_preload (char *ld_preload, const char *to_be_added)
+static void
+ensure_in_ld_preload (std::string& ld_preload, const std::string& to_be_added)
 {
-    if (ld_preload && ld_preload[0] != 0) {
-        char *ld_preload_copy;
-        char *p, *savedptr = NULL;
-        int found = 0;
+    if (!ld_preload.empty ()) {
+        bool found = false;
 
-        // Check if we are already in LD_PRELOAD and thus can bail
-        ld_preload_copy = strdup (ld_preload);
-        for (p = strtok_r (ld_preload_copy + LD_PRELOAD.size () + 1, " :", &savedptr);
-             p;
-             p = strtok_r (NULL, " :", &savedptr)) {
-            if (strcmp (p, to_be_added) == 0) {
-                found = 1;
-                break;
+        std::string p;
+        std::istringstream ss (ld_preload.substr (LD_PRELOAD.size () + 1, std::string::npos));
+        while (std::getline (ss, p, ':') && !found) {
+            if (p == to_be_added) {
+                found = true;
             }
         }
-        free (ld_preload_copy);
 
         if (!found) {
-            size_t ld_preload_len = strlen (ld_preload);
-            size_t to_be_added_len = strlen (to_be_added);
-            size_t new_ld_preload_len = ld_preload_len + to_be_added_len + 2;
-            ld_preload = static_cast<char *> (realloc (ld_preload, new_ld_preload_len));
-            ld_preload[ld_preload_len] = ':';
-            strncpy (ld_preload + ld_preload_len + 1, to_be_added, to_be_added_len);
-            ld_preload[new_ld_preload_len-1] = '\0';
+            ld_preload += ':' + to_be_added;
         }
     } else {
-        size_t to_be_added_len = strlen (to_be_added);
-        free (ld_preload);
-        ld_preload = static_cast<char *> (malloc (to_be_added_len + LD_PRELOAD.size () + 2));
-        strncpy (ld_preload, (LD_PRELOAD + '=').c_str (), LD_PRELOAD.size () + 1);
-        strncpy (ld_preload + LD_PRELOAD.size () + 1, to_be_added, to_be_added_len);
-        ld_preload[to_be_added_len-1] = '\0';
+        ld_preload = LD_PRELOAD + '=' + to_be_added;
     }
-    return ld_preload;
 }
 
-static char **
+static std::vector<char *>
 execve_copy_envp (char *const envp[])
 {
-    int i, num_elements;
-    char **new_envp = NULL;
-    char *ld_preload = NULL;
-    char *snapcraft_preload = NULL;
+    std::string ld_preload;
+    std::vector<char *> new_envp;
 
-    for (num_elements = 0; envp && envp[num_elements]; num_elements++) {
-        // this space intentionally left blank
-    }
+    for (unsigned i = 0; envp && envp[i]; ++i) {
+        std::string env(envp[i]);
+        new_envp.push_back (strdup (env.c_str ()));
 
-    new_envp = static_cast<char **>(malloc (sizeof (char *) * (num_elements + 3)));
-
-    for (i = 0; i < num_elements; i++) {
-        new_envp[i] = strdup (envp[i]);
-        if (strncmp (envp[i], (LD_PRELOAD + '=').c_str (), LD_PRELOAD.size () + 1) == 0) {
-            ld_preload = new_envp[i]; // point at last defined LD_PRELOAD
+        if (env.compare (0, LD_PRELOAD.size () + 1, LD_PRELOAD + '=') == 0) {
+            ld_preload = env; // point at last defined LD_PRELOAD index
         }
     }
 
-    if (saved_ld_preloads) {
-        size_t j;
-        char *ld_preload_copy;
-        ld_preload_copy = ld_preload ? strdup (ld_preload) : NULL;
-        for (j = 0; j < num_saved_ld_preloads; j++) {
-            ld_preload_copy = ensure_in_ld_preload(ld_preload_copy, saved_ld_preloads[j]);
-        }
-        new_envp[i++] = ld_preload_copy;
-    }
+    for (const std::string& saved_preload : saved_ld_preloads)
+        ensure_in_ld_preload (ld_preload, saved_preload);
+
+    if (!saved_ld_preloads.empty ())
+        new_envp.push_back (strdup (ld_preload.c_str()));
 
     if (!saved_snapcraft_preload.empty ()) {
-        size_t preload_len = saved_snapcraft_preload.size () + SNAPCRAFT_PRELOAD.size () + 2;
-        snapcraft_preload = static_cast<char *> (malloc (preload_len));
-        strncpy (snapcraft_preload, (SNAPCRAFT_PRELOAD + '=').c_str (), SNAPCRAFT_PRELOAD.size () + 1);
-        strncpy (snapcraft_preload + SNAPCRAFT_PRELOAD.size () + 1, saved_snapcraft_preload.c_str (), saved_snapcraft_preload.size ());
-        snapcraft_preload[preload_len-1] = '\0';
-        new_envp[i++] = snapcraft_preload;
+        auto snapcraft_preload = SNAPCRAFT_PRELOAD + '=' + saved_snapcraft_preload;
+        new_envp.push_back (strdup (snapcraft_preload.c_str ()));
     }
 
-    new_envp[i++] = NULL;
+    new_envp.push_back(nullptr);
     return new_envp;
 }
 
@@ -597,7 +561,6 @@ execve32_wrapper (int (*_execve) (const char *path, char *const argv[], char *co
 static int
 execve_wrapper (const char *func, const char *path, char *const argv[], char *const envp[])
 {
-    char **new_envp = NULL;
     int i, result;
 
     static int (*_execve) (const char *, char *const[], char *const[]) =
@@ -611,9 +574,9 @@ execve_wrapper (const char *func, const char *path, char *const argv[], char *co
 
     // Make sure we inject our original preload values, can't trust this
     // program to pass them along in envp for us.
-    new_envp = execve_copy_envp (envp);
+    auto new_envp = execve_copy_envp (envp);
 
-    result = _execve (new_path.c_str (), argv, new_envp);
+    result = _execve (new_path.c_str (), argv, new_envp.data ());
 
     if (result == -1 && errno == ENOENT) {
         // OK, get prepared for gross hacks here.  In order to run 32-bit ELF
@@ -629,14 +592,12 @@ execve_wrapper (const char *func, const char *path, char *const argv[], char *co
             // means the ENOENT must have been a missing linked library or the
             // wrong ld.so loader.  Lets assume the latter and try to run as
             // a 32-bit executable.
-            result = execve32_wrapper (_execve, new_path.c_str (), argv, new_envp);
+            result = execve32_wrapper (_execve, new_path.c_str (), argv, new_envp.data ());
         }
     }
 
-    for (i = 0; new_envp[i]; i++) {
-        free (new_envp[i]);
-    }
-    free (new_envp);
+    for (char *envp : new_envp)
+        free (envp);
 
     return result;
 }
