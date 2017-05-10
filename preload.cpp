@@ -81,6 +81,21 @@ getenv_string(const std::string& varname)
     return envvar ? envvar : "";
 }
 
+inline bool
+str_starts_with(const std::string& str, std::string const& prefix)
+{
+    return str.compare (0, prefix.size (), prefix) == 0;
+}
+
+inline bool
+str_ends_with(const std::string& str, std::string const& sufix)
+{
+    if (str.size () < sufix.size ())
+        return false;
+
+    return str.compare (str.size() - sufix.size (), sufix.size (), sufix) == 0;
+}
+
 struct Initializer { Initializer (); };
 static Initializer initalizer;
 
@@ -110,9 +125,8 @@ Initializer::Initializer()
     // ourselves.
     std::string p;
     std::istringstream ss (ld_preload);
-    size_t libnamelen = SNAPCRAFT_LIBNAME.size ();
     while (std::getline (ss, p, ':')) {
-        if (p.size () > libnamelen && p[0] == '/' && p.compare (p.size () - libnamelen - 1, libnamelen + 1, "/" SNAPCRAFT_LIBNAME_DEF) == 0) {
+        if (str_ends_with (p, "/" SNAPCRAFT_LIBNAME_DEF)) {
             saved_ld_preloads.push_back (p);
         }
     }
@@ -167,8 +181,8 @@ redirect_path_full (std::string const& pathname, bool check_parent, bool only_if
     // to support reading the base system's files if they exist, else let the app
     // play in /var/lib themselves.  So we reverse the normal check: first see if
     // it exists in root, else do our redirection.
-    if (pathname == DEFAULT_VARLIB || pathname.compare (0, DEFAULT_VARLIB.size () + 1, DEFAULT_VARLIB + '/') == 0) {
-        if (!saved_varlib.empty () && pathname.compare (0, saved_varlib.size (), saved_varlib) != 0 && _access (pathname.c_str(), F_OK) != 0) {
+    if (pathname == DEFAULT_VARLIB || str_starts_with (pathname, DEFAULT_VARLIB + '/')) {
+        if (!saved_varlib.empty () && !str_starts_with (pathname, saved_varlib) && _access (pathname.c_str(), F_OK) != 0) {
             return redirect_writable_path (pathname.data () + DEFAULT_VARLIB.size (), saved_varlib);
         } else {
             return pathname;
@@ -179,7 +193,7 @@ redirect_path_full (std::string const& pathname, bool check_parent, bool only_if
     // snaps allowed path.
     std::string redirected_pathname;
 
-    if (pathname.compare (0, DEFAULT_DEVSHM.size (), DEFAULT_DEVSHM) == 0) {
+    if (str_starts_with (pathname, DEFAULT_DEVSHM)) {
         redirected_pathname = saved_snap_devshm + '.' + pathname;
         string_length_sanitize (redirected_pathname);
         return redirected_pathname;
@@ -511,7 +525,7 @@ execve_copy_envp (char *const envp[])
         std::string env(envp[i]);
         new_envp.push_back (env);
 
-        if (env.compare (0, LD_PRELOAD.size () + 1, LD_PRELOAD + '=') == 0) {
+        if (str_starts_with (env, LD_PRELOAD + '=')) {
             ld_preload = env; // point at last defined LD_PRELOAD index
         }
     }
