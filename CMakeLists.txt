@@ -20,25 +20,26 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Release" CACHE STRING "" FORCE)
 endif(NOT CMAKE_BUILD_TYPE)
 
-set(LIBNAME "libsnapcraft-preload")
+set(SNAPCRAFT_PRELOAD "snapcraft-preload")
+set(LIBNAME "lib${SNAPCRAFT_PRELOAD}")
 set(LIBPATH "lib")
-add_library(snapcraft-preload SHARED preload.cpp)
+add_library(${SNAPCRAFT_PRELOAD} SHARED preload.cpp)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14")
 
-set_target_properties(snapcraft-preload PROPERTIES
-                      COMPILE_FLAGS "-DSNAPCRAFT_LIBNAME=\\\"${LIBNAME}.so\\\"")
-target_link_libraries(snapcraft-preload -ldl)
+set_target_properties(${SNAPCRAFT_PRELOAD} PROPERTIES
+                      COMPILE_FLAGS "-DSNAPCRAFT_LIBNAME_DEF=\\\"${LIBNAME}.so\\\"")
+target_link_libraries(${SNAPCRAFT_PRELOAD} -ldl)
 
 execute_process(COMMAND uname -m COMMAND tr -d '\n' OUTPUT_VARIABLE ARCHITECTURE)
 if(${ARCHITECTURE} STREQUAL "x86_64")
-    add_library(snapcraft-preload32 SHARED preload.cpp)
-    set_target_properties(snapcraft-preload32 PROPERTIES
-                          COMPILE_FLAGS "-DSNAPCRAFT_LIBNAME=\\\"${LIBNAME}32.so\\\" -m32")
-    target_link_libraries(snapcraft-preload32 -ldl -m32)
+    add_library("${SNAPCRAFT_PRELOAD}32" SHARED preload.cpp)
+    set_target_properties("${SNAPCRAFT_PRELOAD}32" PROPERTIES
+                          COMPILE_FLAGS "-DSNAPCRAFT_LIBNAME_DEF=\\\"${LIBNAME}32.so\\\" -m32")
+    target_link_libraries("${SNAPCRAFT_PRELOAD}32" -ldl -m32)
 endif()
 
 configure_file(snapcraft-preload.in snapcraft-preload @ONLY)
 
-install(TARGETS snapcraft-preload LIBRARY DESTINATION ${LIBPATH})
+install(TARGETS ${SNAPCRAFT_PRELOAD} LIBRARY DESTINATION ${LIBPATH})
 install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/snapcraft-preload DESTINATION bin)
