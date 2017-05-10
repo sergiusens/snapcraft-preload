@@ -546,28 +546,24 @@ struct c_vector_holder
     std::vector<const char*> holder_;
 };
 
+int
+execve32_wrapper (execve_t _execve, const std::string& path, char *const argv[], char *const envp[])
+{
     std::string const& custom_loader = redirect_path (LD_LINUX);
     if (custom_loader == LD_LINUX) {
         return 0;
     }
 
+    std::vector<std::string> new_argv;
+    new_argv.push_back (path);
+
     // envp is already adjusted for our needs.  But we need to shift argv
-    for (num_elements = 0; argv && argv[num_elements]; num_elements++) {
-        // this space intentionally left blank
+    for (unsigned i = 0; argv && argv[i]; ++i) {
+        new_argv.push_back (argv[i]);
     }
-    new_argv = static_cast<char **>(malloc (sizeof (char *) * (num_elements + 2)));
-    new_argv[0] = const_cast<char *>(path);
-    for (i = 0; i < num_elements; i++) {
-        new_argv[i + 1] = argv[i];
-    }
-    new_argv[num_elements + 1] = 0;
 
     // Now actually run execve with our loader and adjusted argv
-    result = _execve (custom_loader.c_str (), new_argv, envp);
-
-    // Cleanup on error
-    free (new_argv);
-    return result;
+    return _execve (custom_loader.c_str (), c_vector_holder (new_argv), envp);
 }
 
 int
