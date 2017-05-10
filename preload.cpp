@@ -72,6 +72,7 @@ template <typename dirent_t>
 using compar_function_t = int (*)(const dirent_t **, const dirent_t **);
 
 using socket_action_t = int (*) (int, const struct sockaddr *, socklen_t);
+using execve_t = int (*) (const char *, char *const[], char *const[]);
 
 inline std::string
 getenv_string(const std::string& varname)
@@ -530,7 +531,7 @@ execve_copy_envp (char *const envp[])
 }
 
 int
-execve32_wrapper (int (*_execve) (const char *path, char *const argv[], char *const envp[]), const char *path, char *const argv[], char *const envp[])
+execve32_wrapper (execve_t _execve, const char *path, char *const argv[], char *const envp[])
 {
     char **new_argv;
     int i, num_elements, result;
@@ -564,8 +565,7 @@ execve_wrapper (const char *func, const char *path, char *const argv[], char *co
 {
     int i, result;
 
-    static int (*_execve) (const char *, char *const[], char *const[]) =
-        (decltype(_execve)) dlsym (RTLD_NEXT, func);
+    static execve_t _execve = (decltype(_execve)) dlsym (RTLD_NEXT, func);
 
     if (path == NULL) {
         return _execve (path, argv, envp);
@@ -598,7 +598,7 @@ execve_wrapper (const char *func, const char *path, char *const argv[], char *co
             // means the ENOENT must have been a missing linked library or the
             // wrong ld.so loader.  Lets assume the latter and try to run as
             // a 32-bit executable.
-            result = execve32_wrapper (_execve, new_path.c_str (), argv, new_envp.data ());
+            result = execve32_wrapper (_execve, new_path.c_str (), argv, c_vector_holder(new_envp_vector));
         }
     }
 
