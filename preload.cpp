@@ -1,6 +1,6 @@
 /* -*- Mode: C; indent-tabs-mode: nil; tab-width: 4 -*-
  *
- * Copyright (C) 2015-2016 Canonical, Ltd.
+ * Copyright (C) 2015-2017 Canonical, Ltd.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,13 +15,17 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
+
 #define __USE_GNU
 
 #include <dirent.h>
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <functional>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,17 +47,26 @@
 #define LD_PRELOAD_LEN LITERAL_STRLEN (LD_PRELOAD)
 #define SNAPCRAFT_PRELOAD "SNAPCRAFT_PRELOAD"
 
-static char **saved_ld_preloads = NULL;
-static size_t num_saved_ld_preloads = 0;
-static char *saved_snapcraft_preload = NULL;
-static size_t saved_snapcraft_preload_len = 0;
-static char *saved_varlib = NULL;
-static size_t saved_varlib_len = 0;
-static char *saved_snap_name = NULL;
-static size_t saved_snap_name_len = 0;
-static char *saved_snap_revision = NULL;
-static size_t saved_snap_revision_len = 0;
-static char saved_snap_devshm[NAME_MAX];
+namespace {
+char **saved_ld_preloads = NULL;
+size_t num_saved_ld_preloads = 0;
+char *saved_snapcraft_preload = NULL;
+size_t saved_snapcraft_preload_len = 0;
+char *saved_varlib = NULL;
+size_t saved_varlib_len = 0;
+char *saved_snap_name = NULL;
+size_t saved_snap_name_len = 0;
+char *saved_snap_revision = NULL;
+size_t saved_snap_revision_len = 0;
+char saved_snap_devshm[NAME_MAX];
+
+int (*_access) (const char *, int) = NULL;
+
+template <typename dirent_t>
+using filter_function_t = int (*)(const dirent_t *);
+template <typename dirent_t>
+using compar_function_t = int (*)(const dirent_t **, const dirent_t **);
+} // unnamed namespace
 
 static void constructor() __attribute__((constructor));
 
@@ -81,6 +94,8 @@ void constructor()
 {
     char *ld_preload_copy, *p, *savedptr = NULL;
     size_t libnamelen;
+
+    _access = (decltype(_access)) dlsym (RTLD_NEXT, "access");
 
     // We need to save LD_PRELOAD and SNAPCRAFT_PRELOAD in case we need to
     // propagate the values to an exec'd program.
@@ -113,7 +128,7 @@ void constructor()
         size_t plen = strlen (p);
         if (plen > libnamelen && p[0] == '/' && strncmp (p + plen - libnamelen - 1, "/" SNAPCRAFT_LIBNAME, libnamelen + 1) == 0) {
             ++num_saved_ld_preloads;
-            saved_ld_preloads = realloc (saved_ld_preloads, (num_saved_ld_preloads + 1) * sizeof (char *));
+            saved_ld_preloads = static_cast<char **>(realloc (saved_ld_preloads, (num_saved_ld_preloads + 1) * sizeof (char *)));
             saved_ld_preloads[num_saved_ld_preloads - 1] = strdup (p);
             saved_ld_preloads[num_saved_ld_preloads] = NULL;
         }
@@ -130,8 +145,8 @@ redirect_writable_path (const char *pathname, const char *basepath)
         return strdup (basepath);
     }
 
-    size_t basepath_len = MIN (strlen (basepath), PATH_MAX);
-    redirected_pathname = malloc (PATH_MAX);
+    size_t basepath_len = MIN (strlen (basepath), PATH_MAX - 1);
+    redirected_pathname = static_cast<char *> (malloc (PATH_MAX));
 
     if (basepath[basepath_len - 1] == '/') {
         basepath_len -= 1;
@@ -143,10 +158,11 @@ redirect_writable_path (const char *pathname, const char *basepath)
     return redirected_pathname;
 }
 
-static char *
-redirect_path_full (const char *pathname, int check_parent, int only_if_absolute)
+namespace {
+
+char *
+redirect_path_full (const char *pathname, bool check_parent, bool only_if_absolute)
 {
-    int (*_access) (const char *pathname, int mode);
     char *redirected_pathname;
     int ret;
     char *slash = 0;
@@ -156,7 +172,7 @@ redirect_path_full (const char *pathname, int check_parent, int only_if_absolute
     }
 
     const char *preload_dir = saved_snapcraft_preload;
-    size_t preload_dir_len = MIN (PATH_MAX, saved_snapcraft_preload_len);
+    size_t preload_dir_len = MIN (PATH_MAX - 1, saved_snapcraft_preload_len);
 
     if (preload_dir == NULL) {
         return strdup (pathname);
@@ -165,8 +181,6 @@ redirect_path_full (const char *pathname, int check_parent, int only_if_absolute
     if (only_if_absolute && pathname[0] != '/') {
         return strdup (pathname);
     }
-
-    _access = (int (*)(const char *pathname, int mode)) dlsym (RTLD_NEXT, "access");
 
     // And each app should have its own /var/lib writable tree.  Here, we want
     // to support reading the base system's files if they exist, else let the app
@@ -182,7 +196,7 @@ redirect_path_full (const char *pathname, int check_parent, int only_if_absolute
 
     // Some apps want to open shared memory in random locations. Here we will confine it to the
     // snaps allowed path.
-    redirected_pathname = malloc (PATH_MAX);
+    redirected_pathname = static_cast<char *> (malloc (PATH_MAX));
 
     if (strncmp (pathname, "/dev/shm/", 9) == 0) {
         snprintf(redirected_pathname, PATH_MAX - 1, "%s.%s",
@@ -228,196 +242,156 @@ redirect_path_full (const char *pathname, int check_parent, int only_if_absolute
     }
 }
 
-static char *
+inline char *
 redirect_path (const char *pathname)
 {
-    return redirect_path_full (pathname, 0, 0);
+    return redirect_path_full (pathname, /*check_parent*/ false, /*only_if_absolute*/ false);
 }
 
-static char *
+inline char *
 redirect_path_target (const char *pathname)
 {
-    return redirect_path_full (pathname, 1, 0);
+    return redirect_path_full (pathname, /*check_parent*/ true, /*only_if_absolute*/ false);
 }
 
-static char *
+inline char *
 redirect_path_if_absolute (const char *pathname)
 {
-    return redirect_path_full (pathname, 0, 1);
+    return redirect_path_full (pathname, /*check_parent*/ false, /*only_if_absolute*/ true);
 }
+
+// helper class
+template<typename R, template<typename...> class Params, typename... Args, std::size_t... I>
+inline R call_helper(std::function<R(Args...)> const&func, Params<Args...> const&params, std::index_sequence<I...>)
+{
+    return func(std::get<I>(params)...);
+}
+
+template<typename R, template<typename...> class Params, typename... Args>
+inline R call_with_tuple_args(std::function<R(Args...)> const&func, Params<Args...> const&params)
+{
+    return call_helper(func, params, std::index_sequence_for<Args...>{});
+}
+
+struct NORMAL_REDIRECT {
+    static inline char *redirect (const char *path) { return redirect_path (path); }
+};
+
+struct ABSOLUTE_REDIRECT {
+    static inline char *redirect (const char *path) { return redirect_path_if_absolute (path); }
+};
+
+struct TARGET_REDIRECT {
+    static inline char *redirect (const char *path) { return redirect_path_target (path); }
+};
+
+template<typename R, const char *FUNC_NAME, typename REDIRECT_PATH_TYPE, size_t PATH_IDX, typename... Ts>
+inline R
+redirect_n(Ts... as)
+{
+    std::tuple<Ts...> tpl(as...);
+    const char *path = std::get<PATH_IDX>(tpl);
+    char *new_path = REDIRECT_PATH_TYPE::redirect (path);
+    static std::function<R(Ts...)> func (reinterpret_cast<R(*)(Ts...)> (dlsym (RTLD_NEXT, FUNC_NAME)));
+
+    std::get<PATH_IDX>(tpl) = new_path;
+    R result = call_with_tuple_args (func, tpl);
+    std::get<PATH_IDX>(tpl) = path;
+    free (new_path);
+
+    return result;
+}
+
+template<typename R, const char *FUNC_NAME, typename REDIRECT_PATH_TYPE, typename REDIRECT_TARGET_TYPE, typename... Ts>
+inline R
+redirect_target(const char *path, const char *target, Ts... as)
+{
+    char *new_target = REDIRECT_TARGET_TYPE::redirect (target);
+    R result = redirect_n<R, FUNC_NAME, REDIRECT_PATH_TYPE, 0, const char*, const char*, Ts...>(path, new_target);
+    free (new_target);
+    return result;
+}
+
+struct va_separator {};
+template<typename R, const char *FUNC_NAME, typename REDIRECT_PATH_TYPE, size_t PATH_IDX, typename... Ts>
+inline R
+redirect_open(Ts... as, va_separator, va_list va)
+{
+    mode_t mode = 0;
+    int flags = std::get<PATH_IDX+1>(std::tuple<Ts...>(as...));
+
+    if (flags & (O_CREAT|O_TMPFILE)) {
+        mode = va_arg (va, mode_t);
+    }
+
+    return redirect_n<R, FUNC_NAME, REDIRECT_PATH_TYPE, PATH_IDX, Ts..., mode_t>(as..., mode);
+}
+
+} // unnamed namespace
+
+extern "C"
+{
+#define ARG(A) , A
+#define REDIRECT_NAME(NAME) _ ## NAME ## _preload
+#define DECLARE_REDIRECT(NAME) \
+constexpr const char REDIRECT_NAME(NAME)[] = #NAME;
+
+#define REDIRECT_1(RET, NAME, REDIR_TYPE, SIG, ARGS) \
+DECLARE_REDIRECT(NAME) \
+RET NAME (const char *path SIG) { return redirect_n<RET, REDIRECT_NAME(NAME), REDIR_TYPE, 0>(path ARGS); }
+
+#define REDIRECT_2(RET, NAME, REDIR_TYPE, T1, SIG, ARGS) \
+DECLARE_REDIRECT(NAME) \
+RET NAME (T1 a1, const char *path SIG) { return redirect_n<RET, REDIRECT_NAME(NAME), REDIR_TYPE, 1>(a1, path ARGS); }
+
+#define REDIRECT_3(RET, NAME, REDIR_TYPE, T1, T2, SIG, ARGS) \
+DECLARE_REDIRECT(NAME) \
+RET NAME (T1 a1, T2 a2, const char *path SIG) { return redirect_n<RET, REDIRECT_NAME(NAME), REDIR_TYPE, 2>(a1, a2, path ARGS); }
 
 #define REDIRECT_1_1(RET, NAME) \
-RET \
-NAME (const char *path) \
-{ \
-    RET (*_NAME) (const char *path); \
-    char *new_path = NULL; \
-    RET result; \
-    _NAME = (RET (*)(const char *path)) dlsym (RTLD_NEXT, #NAME); \
-    new_path = redirect_path (path); \
-    result = _NAME (new_path); \
-    free (new_path); \
-    return result; \
-}
+REDIRECT_1(RET, NAME, NORMAL_REDIRECT, ,)
 
 #define REDIRECT_1_2(RET, NAME, T2) \
-RET \
-NAME (const char *path, T2 A2) \
-{ \
-    RET (*_NAME) (const char *path, T2 A2); \
-    char *new_path = NULL; \
-    RET result; \
-    _NAME = (RET (*)(const char *path, T2 A2)) dlsym (RTLD_NEXT, #NAME); \
-    new_path = redirect_path (path); \
-    result = _NAME (new_path, A2); \
-    free (new_path); \
-    return result; \
-}
+REDIRECT_1(RET, NAME, NORMAL_REDIRECT, ARG(T2 a2), ARG(a2))
+
+#define REDIRECT_1_2_AT(RET, NAME, T2) \
+REDIRECT_1(RET, NAME, ABSOLUTE_REDIRECT, ARG(T2 a2), ARG(a2))
 
 #define REDIRECT_1_3(RET, NAME, T2, T3) \
-RET \
-NAME (const char *path, T2 A2, T3 A3) \
-{ \
-    RET (*_NAME) (const char *path, T2 A2, T3 A3); \
-    char *new_path = NULL; \
-    RET result; \
-    _NAME = (RET (*)(const char *path, T2 A2, T3 A3)) dlsym (RTLD_NEXT, #NAME); \
-    new_path = redirect_path (path); \
-    result = _NAME (new_path, A2, A3); \
-    free (new_path); \
-    return result; \
-}
+REDIRECT_1(RET, NAME, NORMAL_REDIRECT, ARG(T2 a2) ARG(T3 a3), ARG(a2) ARG(a3))
+
+#define REDIRECT_1_4(RET, NAME, T2, T3, T4) \
+REDIRECT_1(RET, NAME, NORMAL_REDIRECT, ARG(T2 a2) ARG(T3 a3) ARG(T4 a4), ARG(a2) ARG(a3) ARG(a4))
 
 #define REDIRECT_2_2(RET, NAME, T1) \
-RET \
-NAME (T1 A1, const char *path) \
-{ \
-    RET (*_NAME) (T1 A1, const char *path); \
-    char *new_path = NULL; \
-    RET result; \
-    _NAME = (RET (*)(T1 A1, const char *path)) dlsym (RTLD_NEXT, #NAME); \
-    new_path = redirect_path (path); \
-    result = _NAME (A1, new_path); \
-    free (new_path); \
-    return result; \
-}
+REDIRECT_2(RET, NAME, NORMAL_REDIRECT, T1, ,)
 
 #define REDIRECT_2_3(RET, NAME, T1, T3) \
-RET \
-NAME (T1 A1, const char *path, T3 A3) \
-{ \
-    RET (*_NAME) (T1 A1, const char *path, T3 A3); \
-    char *new_path = NULL; \
-    RET result; \
-    _NAME = (RET (*)(T1 A1, const char *path, T3 A3)) dlsym (RTLD_NEXT, #NAME); \
-    new_path = redirect_path (path); \
-    result = _NAME (A1, new_path, A3); \
-    free (new_path); \
-    return result; \
-}
+REDIRECT_2(RET, NAME, NORMAL_REDIRECT, T1, ARG(T3 a3), ARG(a3))
 
 #define REDIRECT_2_3_AT(RET, NAME, T1, T3) \
-RET \
-NAME (T1 A1, const char *path, T3 A3) \
-{ \
-    RET (*_NAME) (T1 A1, const char *path, T3 A3); \
-    char *new_path = NULL; \
-    RET result; \
-    _NAME = (RET (*)(T1 A1, const char *path, T3 A3)) dlsym (RTLD_NEXT, #NAME); \
-    new_path = redirect_path_if_absolute (path); \
-    result = _NAME (A1, new_path, A3); \
-    free (new_path); \
-    return result; \
-}
+REDIRECT_2(RET, NAME, ABSOLUTE_REDIRECT, T1, ARG(T3 a3), ARG(a3))
 
 #define REDIRECT_2_4_AT(RET, NAME, T1, T3, T4) \
-RET \
-NAME (T1 A1, const char *path, T3 A3, T4 A4) \
-{ \
-    RET (*_NAME) (T1 A1, const char *path, T3 A3, T4 A4); \
-    char *new_path = NULL; \
-    RET result; \
-    _NAME = (RET (*)(T1 A1, const char *path, T3 A3, T4 A4)) dlsym (RTLD_NEXT, #NAME); \
-    new_path = redirect_path_if_absolute (path); \
-    result = _NAME (A1, new_path, A3, A4); \
-    free (new_path); \
-    return result; \
-}
+REDIRECT_2(RET, NAME, ABSOLUTE_REDIRECT, T1, ARG(T3 a3) ARG(T4 a4), ARG(a3) ARG(a4))
+
+#define REDIRECT_2_5_AT(RET, NAME, T1, T3, T4, T5) \
+REDIRECT_2(RET, NAME, ABSOLUTE_REDIRECT, T1, ARG(T3 a3) ARG(T4 a4) ARG(T5 a5), ARG(a3) ARG(a4) ARG(a5))
 
 #define REDIRECT_3_5(RET, NAME, T1, T2, T4, T5) \
-RET \
-NAME (T1 A1, T2 A2, const char *path, T4 A4, T5 A5) \
-{ \
-    RET (*_NAME) (T1 A1, T2 A2, const char *path, T4 A4, T5 A5); \
-    char *new_path = NULL; \
-    RET result; \
-    _NAME = (RET (*)(T1 A1, T2 A2, const char *path, T4 A4, T5 A5)) dlsym (RTLD_NEXT, #NAME); \
-    new_path = redirect_path (path); \
-    result = _NAME (A1, A2, new_path, A4, A5); \
-    free (new_path); \
-    return result; \
-}
+REDIRECT_3(RET, NAME, NORMAL_REDIRECT, T1, T2, ARG(T4 a4) ARG(T5 a5), ARG(a4) ARG(a5))
 
 #define REDIRECT_TARGET(RET, NAME) \
-RET \
-NAME (const char *path, const char *target) \
-{ \
-    RET (*_NAME) (const char *path, const char *target); \
-    char *new_path = NULL; \
-    char *new_target = NULL; \
-    RET result; \
-    _NAME = (RET (*)(const char *path, const char *target)) dlsym (RTLD_NEXT, #NAME); \
-    new_path = redirect_path (path); \
-    new_target = redirect_path_target (target); \
-    result = _NAME (new_path, new_target); \
-    free (new_path); \
-    free (new_target); \
-    return result; \
-}
+DECLARE_REDIRECT(NAME) \
+RET NAME (const char *path, const char *target) { return redirect_target<RET, REDIRECT_NAME(NAME), NORMAL_REDIRECT, TARGET_REDIRECT>(path, target); }
 
 #define REDIRECT_OPEN(NAME) \
-int \
-NAME (const char *path, int flags, ...) \
-{ \
-    int mode = 0; \
-    int (*_NAME) (const char *path, int flags, mode_t mode); \
-    char *new_path = NULL; \
-    int result; \
-    if (flags & (O_CREAT|O_TMPFILE)) \
-    { \
-        va_list ap; \
-        va_start (ap, flags); \
-        mode = va_arg (ap, mode_t); \
-        va_end (ap); \
-    } \
-    _NAME = (int (*)(const char *path, int flags, mode_t mode)) dlsym (RTLD_NEXT, #NAME); \
-    new_path = redirect_path (path); \
-    result = _NAME (new_path, flags, mode); \
-    free (new_path); \
-    return result; \
-}
+DECLARE_REDIRECT(NAME) \
+int NAME (const char *path, int flags, ...) { va_list va; va_start(va, flags); int ret = redirect_open<int, REDIRECT_NAME(NAME), NORMAL_REDIRECT, 0, const char *, int>(path, flags, va_separator(), va); va_end(va); return ret; }
 
 #define REDIRECT_OPEN_AT(NAME) \
-int \
-NAME (int dirfp, const char *path, int flags, ...) \
-{ \
-    int mode = 0; \
-    int (*_NAME) (int dirfp, const char *path, int flags, mode_t mode); \
-    char *new_path = NULL; \
-    int result; \
-    if (flags & (O_CREAT|O_TMPFILE)) \
-    { \
-        va_list ap; \
-        va_start (ap, flags); \
-        mode = va_arg (ap, mode_t); \
-        va_end (ap); \
-    } \
-    _NAME = (int (*)(int dirfp, const char *path, int flags, mode_t mode)) dlsym (RTLD_NEXT, #NAME); \
-    new_path = redirect_path_if_absolute (path); \
-    result = _NAME (dirfp, new_path, flags, mode); \
-    free (new_path); \
-    return result; \
-}
+DECLARE_REDIRECT(NAME) \
+int NAME (int dirfp, const char *path, int flags, ...) { va_list va; va_start(va, flags); int ret = redirect_open<int, _ ## NAME ## _preload, ABSOLUTE_REDIRECT, 1, int, const char *, int>(dirfp, path, flags, va_separator(), va); va_end(va); return ret; }
 
 REDIRECT_1_2(FILE *, fopen, const char *)
 REDIRECT_1_1(int, unlink)
@@ -434,6 +408,7 @@ REDIRECT_1_2(int, creat, mode_t)
 REDIRECT_1_2(int, creat64, mode_t)
 REDIRECT_1_2(int, truncate, off_t)
 REDIRECT_2_2(char *, bindtextdomain, const char *)
+REDIRECT_2_3(int, xstat, int, struct stat *)
 REDIRECT_2_3(int, __xstat, int, struct stat *)
 REDIRECT_2_3(int, __xstat64, int, struct stat64 *)
 REDIRECT_2_3(int, __lxstat, int, struct stat *)
@@ -462,41 +437,20 @@ REDIRECT_OPEN(open64)
 REDIRECT_OPEN_AT(openat)
 REDIRECT_OPEN_AT(openat64)
 REDIRECT_2_3(int, inotify_add_watch, int, uint32_t)
+REDIRECT_1_4(int, scandir, struct dirent ***, filter_function_t<struct dirent>, compar_function_t<struct dirent>);
+REDIRECT_1_4(int, scandir64, struct dirent64 ***, filter_function_t<struct dirent64>, compar_function_t<struct dirent64>);
+REDIRECT_2_5_AT(int, scandirat, int, struct dirent ***, filter_function_t<struct dirent>, compar_function_t<struct dirent>);
+REDIRECT_2_5_AT(int, scandirat64, int, struct dirent64 ***, filter_function_t<struct dirent64>, compar_function_t<struct dirent64>);
 
-int
-scandir (const char *dirp, struct dirent ***namelist, int (*filter)(const struct dirent *), int (*compar)(const struct dirent **, const struct dirent **))
-{
-    int (*_scandir) (const char *dirp, struct dirent ***namelist, int (*filter)(const struct dirent *), int (*compar)(const struct dirent **, const struct dirent **));
-    char *new_path = NULL;
-    int ret;
-
-    _scandir = (int (*)(const char *dirp, struct dirent ***namelist, int (*filter)(const struct dirent *), int (*compar)(const struct dirent **, const struct dirent **))) dlsym (RTLD_NEXT, "scandir");
-
-    new_path = redirect_path (dirp);
-    ret = _scandir (new_path, namelist, filter, compar);
-    free (new_path);
-
-    return ret;
+// non-absolute library paths aren't simply relative paths, they need
+// a whole lookup algorithm
+REDIRECT_1_2_AT(void *, dlopen, int);
 }
 
-int
-scandirat (int dirfd, const char *dirp, struct dirent ***namelist, int (*filter)(const struct dirent *), int (*compar)(const struct dirent **, const struct dirent **))
-{
-    int (*_scandirat) (int dirfd, const char *dirp, struct dirent ***namelist, int (*filter)(const struct dirent *), int (*compar)(const struct dirent **, const struct dirent **));
-    char *new_path = NULL;
-    int ret;
-
-    _scandirat = (int (*)(int dirfd, const char *dirp, struct dirent ***namelist, int (*filter)(const struct dirent *), int (*compar)(const struct dirent **, const struct dirent **))) dlsym (RTLD_NEXT, "scandirat");
-
-    new_path = redirect_path_if_absolute (dirp);
-    ret = _scandirat (dirfd, new_path, namelist, filter, compar);
-    free (new_path);
-
-    return ret;
-}
+using socket_action_t = int (*) (int, const struct sockaddr *, socklen_t);
 
 static int
-socket_action (int (*action) (int sockfd, const struct sockaddr *addr, socklen_t addrlen), int sockfd, const struct sockaddr *addr, socklen_t addrlen)
+socket_action (socket_action_t action, int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 {
     const struct sockaddr_un *un_addr = (const struct sockaddr_un *)addr;
 
@@ -517,9 +471,10 @@ socket_action (int (*action) (int sockfd, const struct sockaddr *addr, socklen_t
         result = action (sockfd, addr, addrlen);
     } else {
         struct sockaddr_un new_addr = {0};
+        size_t new_path_len = MIN (strlen (new_path), PATH_MAX - 1);
         new_addr.sun_family = AF_UNIX;
-        new_addr.sun_path[0] = '\0';
-        strncat (new_addr.sun_path, new_path, PATH_MAX - 1);
+        strncpy (new_addr.sun_path, new_path, new_path_len);
+        new_addr.sun_path[new_path_len] = '\0';
         result = action (sockfd, (const struct sockaddr *) &new_addr, sizeof (new_addr));
     }
 
@@ -527,44 +482,22 @@ socket_action (int (*action) (int sockfd, const struct sockaddr *addr, socklen_t
     return result;
 }
 
-int
+extern "C" int
 bind (int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 {
-    int (*_bind) (int sockfd, const struct sockaddr *addr, socklen_t addrlen);
+    static socket_action_t _bind =
+        (decltype(_bind)) dlsym (RTLD_NEXT, "bind");
 
-    _bind = (int (*)(int sockfd, const struct sockaddr *addr, socklen_t addrlen)) dlsym (RTLD_NEXT, "bind");
     return socket_action (_bind, sockfd, addr, addrlen);
 }
 
-int
+extern "C" int
 connect (int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 {
-    int (*_connect) (int sockfd, const struct sockaddr *addr, socklen_t addrlen);
+    static socket_action_t _connect =
+        (decltype(_connect)) dlsym (RTLD_NEXT, "connect");
 
-    _connect = (int (*)(int sockfd, const struct sockaddr *addr, socklen_t addrlen)) dlsym (RTLD_NEXT, "connect");
     return socket_action (_connect, sockfd, addr, addrlen);
-}
-
-void *
-dlopen (const char *path, int mode)
-{
-    void *(*_dlopen) (const char *path, int mode);
-    char *new_path = NULL;
-    void *result;
-
-    _dlopen = (void *(*)(const char *path, int mode)) dlsym (RTLD_NEXT, "dlopen");
-
-    if (path && path[0] == '/') {
-        new_path = redirect_path (path);
-        result = _dlopen (new_path, mode);
-        free (new_path);
-    } else {
-        // non-absolute library paths aren't simply relative paths, they need
-        // a whole lookup algorithm
-        result = _dlopen (path, mode);
-    }
-
-    return result;
 }
 
 static char *
@@ -591,7 +524,7 @@ ensure_in_ld_preload (char *ld_preload, const char *to_be_added)
             size_t ld_preload_len = strlen (ld_preload);
             size_t to_be_added_len = strlen (to_be_added);
             size_t new_ld_preload_len = ld_preload_len + to_be_added_len + 2;
-            ld_preload = realloc (ld_preload, new_ld_preload_len);
+            ld_preload = static_cast<char *> (realloc (ld_preload, new_ld_preload_len));
             ld_preload[ld_preload_len] = ':';
             strncpy (ld_preload + ld_preload_len + 1, to_be_added, to_be_added_len);
             ld_preload[new_ld_preload_len-1] = '\0';
@@ -599,7 +532,7 @@ ensure_in_ld_preload (char *ld_preload, const char *to_be_added)
     } else {
         size_t to_be_added_len = strlen (to_be_added);
         free (ld_preload);
-        ld_preload = malloc (to_be_added_len + LD_PRELOAD_LEN + 2);
+        ld_preload = static_cast<char *> (malloc (to_be_added_len + LD_PRELOAD_LEN + 2));
         strncpy (ld_preload, LD_PRELOAD "=", LD_PRELOAD_LEN + 1);
         strncpy (ld_preload + LITERAL_STRLEN (LD_PRELOAD) + 1, to_be_added, to_be_added_len);
         ld_preload[to_be_added_len-1] = '\0';
@@ -619,7 +552,7 @@ execve_copy_envp (char *const envp[])
         // this space intentionally left blank
     }
 
-    new_envp = malloc (sizeof (char *) * (num_elements + 3));
+    new_envp = static_cast<char **>(malloc (sizeof (char *) * (num_elements + 3)));
 
     for (i = 0; i < num_elements; i++) {
         new_envp[i] = strdup (envp[i]);
@@ -640,7 +573,7 @@ execve_copy_envp (char *const envp[])
 
     if (saved_snapcraft_preload) {
         size_t preload_len = saved_snapcraft_preload_len + LITERAL_STRLEN (SNAPCRAFT_PRELOAD) + 2;
-        snapcraft_preload = malloc (preload_len);
+        snapcraft_preload = static_cast<char *> (malloc (preload_len));
         strncpy (snapcraft_preload, SNAPCRAFT_PRELOAD "=", LITERAL_STRLEN (SNAPCRAFT_PRELOAD) + 1);
         strncpy (snapcraft_preload + LITERAL_STRLEN (SNAPCRAFT_PRELOAD) + 1, saved_snapcraft_preload, saved_snapcraft_preload_len);
         snapcraft_preload[preload_len-1] = '\0';
@@ -668,7 +601,7 @@ execve32_wrapper (int (*_execve) (const char *path, char *const argv[], char *co
     for (num_elements = 0; argv && argv[num_elements]; num_elements++) {
         // this space intentionally left blank
     }
-    new_argv = malloc (sizeof (char *) * (num_elements + 2));
+    new_argv = static_cast<char **>(malloc (sizeof (char *) * (num_elements + 2)));
     new_argv[0] = path;
     for (i = 0; i < num_elements; i++) {
         new_argv[i + 1] = argv[i];
@@ -687,12 +620,12 @@ execve32_wrapper (int (*_execve) (const char *path, char *const argv[], char *co
 static int
 execve_wrapper (const char *func, const char *path, char *const argv[], char *const envp[])
 {
-    int (*_execve) (const char *path, char *const argv[], char *const envp[]);
     char *new_path = NULL;
     char **new_envp = NULL;
     int i, result;
 
-    _execve = (int (*)(const char *path, char *const argv[], char *const envp[])) dlsym (RTLD_NEXT, func);
+    static int (*_execve) (const char *, char *const[], char *const[]) =
+        (decltype(_execve)) dlsym (RTLD_NEXT, func);
 
     new_path = redirect_path (path);
 
@@ -711,8 +644,6 @@ execve_wrapper (const char *func, const char *path, char *const argv[], char *co
         // ld.so loader which will only work if the architecture matches.  So if
         // we failed to run it normally above because the loader couldn't find
         // something, try with our own 32-bit loader.
-        int (*_access) (const char *pathname, int mode);
-        _access = (int (*)(const char *pathname, int mode)) dlsym (RTLD_NEXT, "access");
         if (_access (new_path, F_OK) == 0) {
             // Only actually try this if the path actually did exist.  That
             // means the ENOENT must have been a missing linked library or the
@@ -731,19 +662,19 @@ execve_wrapper (const char *func, const char *path, char *const argv[], char *co
     return result;
 }
 
-int
+extern "C" int
 execv (const char *path, char *const argv[])
 {
     return execve (path, argv, environ);
 }
 
-int
+extern "C" int
 execve (const char *path, char *const argv[], char *const envp[])
 {
     return execve_wrapper ("execve", path, argv, envp);
 }
 
-int
+extern "C" int
 __execve (const char *path, char *const argv[], char *const envp[])
 {
     return execve_wrapper ("__execve", path, argv, envp);
