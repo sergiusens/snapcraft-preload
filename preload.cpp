@@ -266,19 +266,19 @@ inline R call_helper(std::function<R(Args...)> const&func, Params<Args...> const
 template<typename R, template<typename...> class Params, typename... Args>
 inline R call_with_tuple_args(std::function<R(Args...)> const&func, Params<Args...> const&params)
 {
-    return call_helper(func, params, std::index_sequence_for<Args...>{});
+    return call_helper (func, params, std::index_sequence_for<Args...>{});
 }
 
 struct NORMAL_REDIRECT {
-  static inline std::string redirect (const std::string& path) { return redirect_path (path); }
+    static inline std::string redirect (const std::string& path) { return redirect_path (path); }
 };
 
 struct ABSOLUTE_REDIRECT {
-  static inline std::string redirect (const std::string& path) { return redirect_path_if_absolute (path); }
+    static inline std::string redirect (const std::string& path) { return redirect_path_if_absolute (path); }
 };
 
 struct TARGET_REDIRECT {
-  static inline std::string redirect (const std::string& path) { return redirect_path_target (path); }
+    static inline std::string redirect (const std::string& path) { return redirect_path_target (path); }
 };
 
 template<typename R, const char *FUNC_NAME, typename REDIRECT_PATH_TYPE, size_t PATH_IDX, typename... Ts>
