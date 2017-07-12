@@ -387,7 +387,7 @@ int NAME (const char *path, int flags, ...) { va_list va; va_start(va, flags); i
 
 #define REDIRECT_OPEN_AT(NAME) \
 DECLARE_REDIRECT(NAME) \
-int NAME (int dirfp, const char *path, int flags, ...) { va_list va; va_start(va, flags); int ret = redirect_open<int, _ ## NAME ## _preload, ABSOLUTE_REDIRECT, 1, int, const char *, int>(dirfp, path, flags, va_separator(), va); va_end(va); return ret; }
+int NAME (int dirfp, const char *path, int flags, ...) { va_list va; va_start(va, flags); int ret = redirect_open<int, REDIRECT_NAME(NAME), ABSOLUTE_REDIRECT, 1, int, const char *, int>(dirfp, path, flags, va_separator(), va); va_end(va); return ret; }
 
 REDIRECT_1_2(FILE *, fopen, const char *)
 REDIRECT_1_1(int, unlink)
