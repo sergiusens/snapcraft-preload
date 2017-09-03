@@ -53,6 +53,7 @@ size_t num_saved_ld_preloads = 0;
 char *saved_snapcraft_preload = NULL;
 size_t saved_snapcraft_preload_len = 0;
 char *saved_varlib = NULL;
+char *saved_tmpdir = NULL;
 size_t saved_varlib_len = 0;
 char *saved_snap_name = NULL;
 size_t saved_snap_name_len = 0;
@@ -111,6 +112,10 @@ void constructor()
     }
 
     saved_varlib = getenvdup ("SNAP_DATA", &saved_varlib_len);
+    saved_tmpdir = getenvdup ("TMPDIR", NULL);
+    // Be paranoid, maybe $TMPDIR won't be defined in a future snapd
+    if (saved_tmpdir == NULL)
+        saved_tmpdir = "/tmp";
     saved_snap_name = getenvdup ("SNAP_NAME", &saved_snap_name_len);
     saved_snap_revision = getenvdup ("SNAP_REVISION", &saved_snap_revision_len);
 
@@ -192,6 +197,11 @@ redirect_path_full (const char *pathname, bool check_parent, bool only_if_absolu
         } else {
             return strdup (pathname);
         }
+    }
+
+    // Apps should use $TMPDIR (/tmp) rather than /var/tmp
+    if (strcmp (pathname, "/var/tmp") == 0 || strncmp (pathname, "/var/tmp/", 9) == 0) {
+        return redirect_writable_path (pathname + 8, saved_tmpdir);
     }
 
     // Some apps want to open shared memory in random locations. Here we will confine it to the
