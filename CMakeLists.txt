@@ -41,4 +41,5 @@ endif()
 configure_file(snapcraft-preload.in snapcraft-preload @ONLY)
 
 install(TARGETS snapcraft-preload LIBRARY DESTINATION ${LIBPATH})
+install(TARGETS snapcraft-preload32 LIBRARY DESTINATION ${LIBPATH} OPTIONAL)
 install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/snapcraft-preload DESTINATION bin)
