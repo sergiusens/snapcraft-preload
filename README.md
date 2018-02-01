@@ -5,7 +5,7 @@ Add this as a part to your `snapcraft.yaml`:
 ```yaml
 parts:
     snapcraft-preload:
-        source: .
+        source: https://github.com/sergiusens/snapcraft-preload.git
         plugin: cmake
         build-packages:
             - gcc-multilib
