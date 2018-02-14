@@ -118,7 +118,7 @@ Initializer::Initializer()
     saved_varlib = getenv_string ("SNAP_DATA");
     saved_snap_name = getenv_string ("SNAP_NAME");
     saved_snap_revision = getenv_string ("SNAP_REVISION");
-    saved_snap_devshm = DEFAULT_DEVSHM + "/snap." + saved_snap_name;
+    saved_snap_devshm = DEFAULT_DEVSHM + "snap." + saved_snap_name;
 
     // Pull out each absolute-pathed libsnapcraft-preload.so we find.  Better to
     // accidentally include some other libsnapcraft-preload than not propagate
@@ -193,8 +193,9 @@ redirect_path_full (std::string const& pathname, bool check_parent, bool only_if
     // snaps allowed path.
     std::string redirected_pathname;
 
-    if (str_starts_with (pathname, DEFAULT_DEVSHM)) {
-        redirected_pathname = saved_snap_devshm + '.' + pathname;
+    if (str_starts_with (pathname, DEFAULT_DEVSHM) && !str_starts_with (pathname, saved_snap_devshm)) {
+        std::string new_pathname = pathname.substr(DEFAULT_DEVSHM.size());
+        redirected_pathname = saved_snap_devshm + '.' + new_pathname;
         string_length_sanitize (redirected_pathname);
         return redirected_pathname;
     }
