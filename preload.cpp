@@ -26,6 +26,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <functional>
+#include <iostream>
+#include <sstream>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,29 +38,31 @@
 #include <sys/statvfs.h>
 #include <sys/un.h>
 #include <sys/vfs.h>
+#include <vector>
 #include <unistd.h>
 
-#ifndef SNAPCRAFT_LIBNAME
-#define SNAPCRAFT_LIBNAME "snapcraft-preload.so"
+#ifndef SNAPCRAFT_LIBNAME_DEF
+#define SNAPCRAFT_LIBNAME_DEF "libsnapcraft-preload.so"
 #endif
 
 #define LITERAL_STRLEN(s) (sizeof (s) - 1)
-#define LD_PRELOAD "LD_PRELOAD"
-#define LD_PRELOAD_LEN LITERAL_STRLEN (LD_PRELOAD)
-#define SNAPCRAFT_PRELOAD "SNAPCRAFT_PRELOAD"
 
-namespace {
-char **saved_ld_preloads = NULL;
-size_t num_saved_ld_preloads = 0;
-char *saved_snapcraft_preload = NULL;
-size_t saved_snapcraft_preload_len = 0;
-char *saved_varlib = NULL;
-size_t saved_varlib_len = 0;
-char *saved_snap_name = NULL;
-size_t saved_snap_name_len = 0;
-char *saved_snap_revision = NULL;
-size_t saved_snap_revision_len = 0;
-char saved_snap_devshm[NAME_MAX];
+namespace
+{
+const std::string SNAPCRAFT_LIBNAME = SNAPCRAFT_LIBNAME_DEF;
+const std::string SNAPCRAFT_PRELOAD = "SNAPCRAFT_PRELOAD";
+const std::string LD_PRELOAD = "LD_PRELOAD";
+const std::string LD_LINUX = "/lib/ld-linux.so.2";
+const std::string DEFAULT_VARLIB = "/var/lib";
+const std::string DEFAULT_DEVSHM = "/dev/shm/";
+
+std::string saved_snapcraft_preload;
+std::string saved_varlib;
+std::string saved_snap_name;
+std::string saved_snap_revision;
+std::string saved_snap_devshm;
+
+std::vector<std::string> saved_ld_preloads;
 
 int (*_access) (const char *, int) = NULL;
 
@@ -66,196 +70,189 @@ template <typename dirent_t>
 using filter_function_t = int (*)(const dirent_t *);
 template <typename dirent_t>
 using compar_function_t = int (*)(const dirent_t **, const dirent_t **);
-} // unnamed namespace
 
-static void constructor() __attribute__((constructor));
+using socket_action_t = int (*) (int, const struct sockaddr *, socklen_t);
+using execve_t = int (*) (const char *, char *const[], char *const[]);
 
-static char *
-getenvdup (const char *varname, size_t *envlen)
+inline std::string
+getenv_string(const std::string& varname)
 {
-    char *envvar = secure_getenv (varname);
-    if (envvar == NULL || envvar[0] == 0) { // identical for our purposes
-        if (envlen) {
-            *envlen = 0;
-        }
-        return NULL;
-    }
-    else {
-        if (envlen) {
-            *envlen = strlen (envvar);
-            return strndup (envvar, *envlen);
-        }
-
-        return strdup (envvar);
-    }
+    char *envvar = secure_getenv (varname.c_str());
+    return envvar ? envvar : "";
 }
 
-void constructor()
+inline bool
+str_starts_with(const std::string& str, std::string const& prefix)
 {
-    char *ld_preload_copy, *p, *savedptr = NULL;
-    size_t libnamelen;
+    return str.compare (0, prefix.size (), prefix) == 0;
+}
 
+inline bool
+str_ends_with(const std::string& str, std::string const& sufix)
+{
+    if (str.size () < sufix.size ())
+        return false;
+
+    return str.compare (str.size() - sufix.size (), sufix.size (), sufix) == 0;
+}
+
+struct Initializer { Initializer (); };
+static Initializer initalizer;
+
+Initializer::Initializer()
+{
     _access = (decltype(_access)) dlsym (RTLD_NEXT, "access");
 
     // We need to save LD_PRELOAD and SNAPCRAFT_PRELOAD in case we need to
     // propagate the values to an exec'd program.
-    ld_preload_copy = getenvdup (LD_PRELOAD, NULL);
-    if (ld_preload_copy == NULL) {
+    std::string const& ld_preload = getenv_string (LD_PRELOAD);
+    if (ld_preload.empty ()) {
         return;
     }
 
-    saved_snapcraft_preload = getenvdup (SNAPCRAFT_PRELOAD, &saved_snapcraft_preload_len);
-    if (saved_snapcraft_preload == NULL) {
-        free (ld_preload_copy);
+    saved_snapcraft_preload = getenv_string (SNAPCRAFT_PRELOAD);
+    if (saved_snapcraft_preload.empty ()) {
         return;
     }
 
-    saved_varlib = getenvdup ("SNAP_DATA", &saved_varlib_len);
-    saved_snap_name = getenvdup ("SNAP_NAME", &saved_snap_name_len);
-    saved_snap_revision = getenvdup ("SNAP_REVISION", &saved_snap_revision_len);
-
-    if (snprintf(saved_snap_devshm, sizeof saved_snap_devshm, "/dev/shm/snap.%s", saved_snap_name) < 0){
-        perror("cannot construct path /dev/shm/snap.$SNAP_NAME");
-    }
+    saved_varlib = getenv_string ("SNAP_DATA");
+    saved_snap_name = getenv_string ("SNAP_NAME");
+    saved_snap_revision = getenv_string ("SNAP_REVISION");
+    saved_snap_devshm = DEFAULT_DEVSHM + "snap." + saved_snap_name;
 
     // Pull out each absolute-pathed libsnapcraft-preload.so we find.  Better to
     // accidentally include some other libsnapcraft-preload than not propagate
     // ourselves.
-    libnamelen = LITERAL_STRLEN (SNAPCRAFT_LIBNAME);
-    for (p = strtok_r (ld_preload_copy, " :", &savedptr);
-         p;
-         p = strtok_r (NULL, " :", &savedptr)) {
-        size_t plen = strlen (p);
-        if (plen > libnamelen && p[0] == '/' && strncmp (p + plen - libnamelen - 1, "/" SNAPCRAFT_LIBNAME, libnamelen + 1) == 0) {
-            ++num_saved_ld_preloads;
-            saved_ld_preloads = static_cast<char **>(realloc (saved_ld_preloads, (num_saved_ld_preloads + 1) * sizeof (char *)));
-            saved_ld_preloads[num_saved_ld_preloads - 1] = strdup (p);
-            saved_ld_preloads[num_saved_ld_preloads] = NULL;
+    std::string p;
+    std::istringstream ss (ld_preload);
+    while (std::getline (ss, p, ':')) {
+        if (str_ends_with (p, "/" SNAPCRAFT_LIBNAME_DEF)) {
+            saved_ld_preloads.push_back (p);
         }
     }
-    free (ld_preload_copy);
 }
 
-static char *
-redirect_writable_path (const char *pathname, const char *basepath)
+inline void
+string_length_sanitize(std::string& path)
 {
-    char *redirected_pathname;
+    if (path.size () >= PATH_MAX) {
+        std::cerr << "snapcraft-preload: path '" << path << "' exceeds PATH_MAX size (" << PATH_MAX << ") and it will be cut.\n"
+                  << "Expect undefined behavior";
+        path.resize (PATH_MAX);
+    }
+}
 
-    if (pathname[0] == 0) {
-        return strdup (basepath);
+std::string
+redirect_writable_path (std::string const& pathname, std::string const& basepath)
+{
+    if (pathname.empty ()) {
+        return pathname;
     }
 
-    size_t basepath_len = MIN (strlen (basepath), PATH_MAX - 1);
-    redirected_pathname = static_cast<char *> (malloc (PATH_MAX));
+    std::string redirected_pathname (basepath);
 
-    if (basepath[basepath_len - 1] == '/') {
-        basepath_len -= 1;
+    if (redirected_pathname.back () == '/' && pathname.back () == '/') {
+        redirected_pathname.resize (redirected_pathname.size () - 1);
     }
-    strncpy (redirected_pathname, basepath, basepath_len);
 
-    strncat (redirected_pathname, pathname, PATH_MAX - 1 - basepath_len);
+    redirected_pathname += pathname;
+    string_length_sanitize (redirected_pathname);
 
     return redirected_pathname;
 }
 
-namespace {
-
-char *
-redirect_path_full (const char *pathname, bool check_parent, bool only_if_absolute)
+std::string
+redirect_path_full (std::string const& pathname, bool check_parent, bool only_if_absolute)
 {
-    char *redirected_pathname;
-    int ret;
-    char *slash = 0;
-
-    if (pathname == NULL) {
-        return NULL;
+    if (pathname.empty ()) {
+        return pathname;
     }
 
-    const char *preload_dir = saved_snapcraft_preload;
-    size_t preload_dir_len = MIN (PATH_MAX - 1, saved_snapcraft_preload_len);
-
-    if (preload_dir == NULL) {
-        return strdup (pathname);
+    const std::string& preload_dir = saved_snapcraft_preload;
+    if (preload_dir.empty()) {
+        return pathname;
     }
 
     if (only_if_absolute && pathname[0] != '/') {
-        return strdup (pathname);
+        return pathname;
     }
 
     // And each app should have its own /var/lib writable tree.  Here, we want
     // to support reading the base system's files if they exist, else let the app
     // play in /var/lib themselves.  So we reverse the normal check: first see if
     // it exists in root, else do our redirection.
-    if (strcmp (pathname, "/var/lib") == 0 || strncmp (pathname, "/var/lib/", 9) == 0) {
-        if (saved_varlib && strncmp (pathname, saved_varlib, saved_varlib_len) != 0 && _access (pathname, F_OK) != 0) {
-            return redirect_writable_path (pathname + 8, saved_varlib);
+    if (pathname == DEFAULT_VARLIB || str_starts_with (pathname, DEFAULT_VARLIB + '/')) {
+        if (!saved_varlib.empty () && !str_starts_with (pathname, saved_varlib) && _access (pathname.c_str(), F_OK) != 0) {
+            return redirect_writable_path (pathname.data () + DEFAULT_VARLIB.size (), saved_varlib);
         } else {
-            return strdup (pathname);
+            return pathname;
         }
     }
 
     // Some apps want to open shared memory in random locations. Here we will confine it to the
     // snaps allowed path.
-    redirected_pathname = static_cast<char *> (malloc (PATH_MAX));
+    std::string redirected_pathname;
 
-    if (strncmp (pathname, "/dev/shm/", 9) == 0) {
-        snprintf(redirected_pathname, PATH_MAX - 1, "%s.%s",
-                 saved_snap_devshm, pathname + 9);
+    if (str_starts_with (pathname, DEFAULT_DEVSHM) && !str_starts_with (pathname, saved_snap_devshm)) {
+        std::string new_pathname = pathname.substr(DEFAULT_DEVSHM.size());
+        redirected_pathname = saved_snap_devshm + '.' + new_pathname;
+        string_length_sanitize (redirected_pathname);
         return redirected_pathname;
     }
 
-    if (preload_dir[preload_dir_len - 1] == '/') {
-        preload_dir_len -= 1;
+    redirected_pathname = preload_dir;
+    if (redirected_pathname.back () == '/') {
+        redirected_pathname.resize(redirected_pathname.size ()-1);
     }
-    strncpy (redirected_pathname, preload_dir, preload_dir_len);
-    redirected_pathname[preload_dir_len] = '\0';
 
     if (pathname[0] != '/') {
-        size_t cursize = strlen (redirected_pathname);
-        if (getcwd (redirected_pathname + cursize, PATH_MAX - cursize) == NULL) {
-            free (redirected_pathname);
-            return strdup (pathname);
+        std::string cwd;
+        cwd.reserve(PATH_MAX);
+        if (getcwd (const_cast<char*>(cwd.data ()), PATH_MAX) == NULL) {
+            return pathname;
         }
-        strncat (redirected_pathname, "/", PATH_MAX - 1 - cursize);
+
+        redirected_pathname += cwd + '/';
     }
 
-    strncat (redirected_pathname, pathname, PATH_MAX - 1 - strlen (redirected_pathname));
+    redirected_pathname += pathname;
+    size_t slash_pos = std::string::npos;
 
     if (check_parent) {
-        slash = strrchr (redirected_pathname, '/');
-        if (slash) { // should always be true
-            *slash = 0;
+        slash_pos = redirected_pathname.find_last_of ('/');
+        if (slash_pos != std::string::npos) { // should always be true
+            redirected_pathname[slash_pos] = 0;
         }
     }
 
-    ret = _access (redirected_pathname, F_OK);
+    int ret = _access (redirected_pathname.c_str (), F_OK);
 
-    if (check_parent && slash) {
-        *slash = '/';
+    if (check_parent && slash_pos != std::string::npos) {
+        redirected_pathname[slash_pos] = '/';
     }
 
     if (ret == 0 || errno == ENOTDIR) { // ENOTDIR is OK because it exists at least
+        string_length_sanitize (redirected_pathname);
         return redirected_pathname;
     } else {
-        free (redirected_pathname);
-        return strdup (pathname);
+        return pathname;
     }
 }
 
-inline char *
-redirect_path (const char *pathname)
+inline std::string
+redirect_path (std::string const& pathname)
 {
     return redirect_path_full (pathname, /*check_parent*/ false, /*only_if_absolute*/ false);
 }
 
-inline char *
-redirect_path_target (const char *pathname)
+inline std::string
+redirect_path_target (std::string const& pathname)
 {
     return redirect_path_full (pathname, /*check_parent*/ true, /*only_if_absolute*/ false);
 }
 
-inline char *
-redirect_path_if_absolute (const char *pathname)
+inline std::string
+redirect_path_if_absolute (std::string const& pathname)
 {
     return redirect_path_full (pathname, /*check_parent*/ false, /*only_if_absolute*/ true);
 }
@@ -264,25 +261,25 @@ redirect_path_if_absolute (const char *pathname)
 template<typename R, template<typename...> class Params, typename... Args, std::size_t... I>
 inline R call_helper(std::function<R(Args...)> const&func, Params<Args...> const&params, std::index_sequence<I...>)
 {
-    return func(std::get<I>(params)...);
+    return func (std::get<I>(params)...);
 }
 
 template<typename R, template<typename...> class Params, typename... Args>
 inline R call_with_tuple_args(std::function<R(Args...)> const&func, Params<Args...> const&params)
 {
-    return call_helper(func, params, std::index_sequence_for<Args...>{});
+    return call_helper (func, params, std::index_sequence_for<Args...>{});
 }
 
 struct NORMAL_REDIRECT {
-    static inline char *redirect (const char *path) { return redirect_path (path); }
+    static inline std::string redirect (const std::string& path) { return redirect_path (path); }
 };
 
 struct ABSOLUTE_REDIRECT {
-    static inline char *redirect (const char *path) { return redirect_path_if_absolute (path); }
+    static inline std::string redirect (const std::string& path) { return redirect_path_if_absolute (path); }
 };
 
 struct TARGET_REDIRECT {
-    static inline char *redirect (const char *path) { return redirect_path_target (path); }
+    static inline std::string redirect (const std::string& path) { return redirect_path_target (path); }
 };
 
 template<typename R, const char *FUNC_NAME, typename REDIRECT_PATH_TYPE, size_t PATH_IDX, typename... Ts>
@@ -291,25 +288,25 @@ redirect_n(Ts... as)
 {
     std::tuple<Ts...> tpl(as...);
     const char *path = std::get<PATH_IDX>(tpl);
-    char *new_path = REDIRECT_PATH_TYPE::redirect (path);
     static std::function<R(Ts...)> func (reinterpret_cast<R(*)(Ts...)> (dlsym (RTLD_NEXT, FUNC_NAME)));
 
-    std::get<PATH_IDX>(tpl) = new_path;
-    R result = call_with_tuple_args (func, tpl);
-    std::get<PATH_IDX>(tpl) = path;
-    free (new_path);
+    if (path != NULL) {
+        std::string const& new_path = REDIRECT_PATH_TYPE::redirect (path);
+        std::get<PATH_IDX>(tpl) = new_path.c_str ();
+        R result = call_with_tuple_args (func, tpl);
+        std::get<PATH_IDX>(tpl) = path;
+        return result;
+    }
 
-    return result;
+    return func (std::forward<Ts>(as)...);
 }
 
 template<typename R, const char *FUNC_NAME, typename REDIRECT_PATH_TYPE, typename REDIRECT_TARGET_TYPE, typename... Ts>
 inline R
 redirect_target(const char *path, const char *target, Ts... as)
 {
-    char *new_target = REDIRECT_TARGET_TYPE::redirect (target);
-    R result = redirect_n<R, FUNC_NAME, REDIRECT_PATH_TYPE, 0, const char*, const char*, Ts...>(path, new_target);
-    free (new_target);
-    return result;
+    std::string const& new_target = REDIRECT_PATH_TYPE::redirect (target ? target : "");
+    return redirect_n<R, FUNC_NAME, REDIRECT_PATH_TYPE, 0, const char*, const char*, Ts...> (path, new_target.c_str ());
 }
 
 struct va_separator {};
@@ -391,7 +388,7 @@ int NAME (const char *path, int flags, ...) { va_list va; va_start(va, flags); i
 
 #define REDIRECT_OPEN_AT(NAME) \
 DECLARE_REDIRECT(NAME) \
-int NAME (int dirfp, const char *path, int flags, ...) { va_list va; va_start(va, flags); int ret = redirect_open<int, _ ## NAME ## _preload, ABSOLUTE_REDIRECT, 1, int, const char *, int>(dirfp, path, flags, va_separator(), va); va_end(va); return ret; }
+int NAME (int dirfp, const char *path, int flags, ...) { va_list va; va_start(va, flags); int ret = redirect_open<int, REDIRECT_NAME(NAME), ABSOLUTE_REDIRECT, 1, int, const char *, int>(dirfp, path, flags, va_separator(), va); va_end(va); return ret; }
 
 REDIRECT_1_2(FILE *, fopen, const char *)
 REDIRECT_1_1(int, unlink)
@@ -447,8 +444,6 @@ REDIRECT_2_5_AT(int, scandirat64, int, struct dirent64 ***, filter_function_t<st
 REDIRECT_1_2_AT(void *, dlopen, int);
 }
 
-using socket_action_t = int (*) (int, const struct sockaddr *, socklen_t);
-
 static int
 socket_action (socket_action_t action, int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 {
@@ -459,26 +454,23 @@ socket_action (socket_action_t action, int sockfd, const struct sockaddr *addr, 
         return action (sockfd, addr, addrlen);
     }
 
-    if (un_addr->sun_path[0] == '\0') {
+    if (!un_addr->sun_path || un_addr->sun_path[0] == '\0') {
         // Abstract sockets
         return action (sockfd, addr, addrlen);
     }
 
     int result = 0;
-    char *new_path = redirect_path (un_addr->sun_path);
+    std::string const& new_path = redirect_path (un_addr->sun_path);
 
-    if (strncmp (un_addr->sun_path, new_path, PATH_MAX) == 0) {
+    if (new_path.compare (0, PATH_MAX, un_addr->sun_path) == 0) {
         result = action (sockfd, addr, addrlen);
     } else {
         struct sockaddr_un new_addr = {0};
-        size_t new_path_len = MIN (strlen (new_path), PATH_MAX - 1);
-        new_addr.sun_family = AF_UNIX;
-        strncpy (new_addr.sun_path, new_path, new_path_len);
-        new_addr.sun_path[new_path_len] = '\0';
+        strncpy (new_addr.sun_path, new_path.c_str (), new_path.size ());
+        new_addr.sun_path[new_path.size ()] = '\0';
         result = action (sockfd, (const struct sockaddr *) &new_addr, sizeof (new_addr));
     }
 
-    free (new_path);
     return result;
 }
 
@@ -500,140 +492,113 @@ connect (int sockfd, const struct sockaddr *addr, socklen_t addrlen)
     return socket_action (_connect, sockfd, addr, addrlen);
 }
 
-static char *
-ensure_in_ld_preload (char *ld_preload, const char *to_be_added)
+namespace
 {
-    if (ld_preload && ld_preload[0] != 0) {
-        char *ld_preload_copy;
-        char *p, *savedptr = NULL;
-        int found = 0;
+void
+ensure_in_ld_preload (std::string& ld_preload, const std::string& to_be_added)
+{
+    if (!ld_preload.empty ()) {
+        bool found = false;
 
-        // Check if we are already in LD_PRELOAD and thus can bail
-        ld_preload_copy = strdup (ld_preload);
-        for (p = strtok_r (ld_preload_copy + LD_PRELOAD_LEN + 1, " :", &savedptr);
-             p;
-             p = strtok_r (NULL, " :", &savedptr)) {
-            if (strcmp (p, to_be_added) == 0) {
-                found = 1;
-                break;
+        std::string p;
+        std::istringstream ss (ld_preload.substr (LD_PRELOAD.size () + 1, std::string::npos));
+        while (std::getline (ss, p, ':') && !found) {
+            if (p == to_be_added) {
+                found = true;
             }
         }
-        free (ld_preload_copy);
 
         if (!found) {
-            size_t ld_preload_len = strlen (ld_preload);
-            size_t to_be_added_len = strlen (to_be_added);
-            size_t new_ld_preload_len = ld_preload_len + to_be_added_len + 2;
-            ld_preload = static_cast<char *> (realloc (ld_preload, new_ld_preload_len));
-            ld_preload[ld_preload_len] = ':';
-            strncpy (ld_preload + ld_preload_len + 1, to_be_added, to_be_added_len);
-            ld_preload[new_ld_preload_len-1] = '\0';
+            ld_preload += ':' + to_be_added;
         }
     } else {
-        size_t to_be_added_len = strlen (to_be_added);
-        free (ld_preload);
-        ld_preload = static_cast<char *> (malloc (to_be_added_len + LD_PRELOAD_LEN + 2));
-        strncpy (ld_preload, LD_PRELOAD "=", LD_PRELOAD_LEN + 1);
-        strncpy (ld_preload + LITERAL_STRLEN (LD_PRELOAD) + 1, to_be_added, to_be_added_len);
-        ld_preload[to_be_added_len-1] = '\0';
+        ld_preload = LD_PRELOAD + '=' + to_be_added;
     }
-    return ld_preload;
 }
 
-static char **
+std::vector<std::string>
 execve_copy_envp (char *const envp[])
 {
-    int i, num_elements;
-    char **new_envp = NULL;
-    char *ld_preload = NULL;
-    char *snapcraft_preload = NULL;
+    std::string ld_preload;
+    std::vector<std::string> new_envp;
 
-    for (num_elements = 0; envp && envp[num_elements]; num_elements++) {
-        // this space intentionally left blank
-    }
+    for (unsigned i = 0; envp && envp[i]; ++i) {
+        std::string env(envp[i]);
+        new_envp.push_back (env);
 
-    new_envp = static_cast<char **>(malloc (sizeof (char *) * (num_elements + 3)));
-
-    for (i = 0; i < num_elements; i++) {
-        new_envp[i] = strdup (envp[i]);
-        if (strncmp (envp[i], LD_PRELOAD "=", LD_PRELOAD_LEN + 1) == 0) {
-            ld_preload = new_envp[i]; // point at last defined LD_PRELOAD
+        if (str_starts_with (env, LD_PRELOAD + '=')) {
+            ld_preload = env; // point at last defined LD_PRELOAD index
         }
     }
 
-    if (saved_ld_preloads) {
-        size_t j;
-        char *ld_preload_copy;
-        ld_preload_copy = ld_preload ? strdup (ld_preload) : NULL;
-        for (j = 0; j < num_saved_ld_preloads; j++) {
-            ld_preload_copy = ensure_in_ld_preload(ld_preload_copy, saved_ld_preloads[j]);
-        }
-        new_envp[i++] = ld_preload_copy;
+    for (const std::string& saved_preload : saved_ld_preloads)
+        ensure_in_ld_preload (ld_preload, saved_preload);
+
+    if (!saved_ld_preloads.empty ())
+        new_envp.push_back (ld_preload);
+
+    if (!saved_snapcraft_preload.empty ()) {
+        auto snapcraft_preload = SNAPCRAFT_PRELOAD + '=' + saved_snapcraft_preload;
+        new_envp.push_back (snapcraft_preload);
     }
 
-    if (saved_snapcraft_preload) {
-        size_t preload_len = saved_snapcraft_preload_len + LITERAL_STRLEN (SNAPCRAFT_PRELOAD) + 2;
-        snapcraft_preload = static_cast<char *> (malloc (preload_len));
-        strncpy (snapcraft_preload, SNAPCRAFT_PRELOAD "=", LITERAL_STRLEN (SNAPCRAFT_PRELOAD) + 1);
-        strncpy (snapcraft_preload + LITERAL_STRLEN (SNAPCRAFT_PRELOAD) + 1, saved_snapcraft_preload, saved_snapcraft_preload_len);
-        snapcraft_preload[preload_len-1] = '\0';
-        new_envp[i++] = snapcraft_preload;
-    }
-
-    new_envp[i++] = NULL;
     return new_envp;
 }
 
-static int
-execve32_wrapper (int (*_execve) (const char *path, char *const argv[], char *const envp[]), char *path, char *const argv[], char *const envp[])
+struct c_vector_holder
 {
-    char *custom_loader = NULL;
-    char **new_argv;
-    int i, num_elements, result;
+    c_vector_holder(const std::vector<std::string>& str_vector) {
+        for (auto const& str : str_vector) {
+            holder_.push_back (str.c_str ());
+        }
+        holder_.push_back (nullptr);
+    }
 
-    custom_loader = redirect_path ("/lib/ld-linux.so.2");
-    if (strcmp (custom_loader, "/lib/ld-linux.so.2") == 0) {
-        free (custom_loader);
+    operator const char **() { return holder_.data (); }
+    operator char* const*() { return (char* const*) holder_.data (); }
+
+    private:
+    std::vector<const char*> holder_;
+};
+
+int
+execve32_wrapper (execve_t _execve, const std::string& path, char *const argv[], char *const envp[])
+{
+    std::string const& custom_loader = redirect_path (LD_LINUX);
+    if (custom_loader == LD_LINUX) {
         return 0;
     }
 
+    std::vector<std::string> new_argv;
+    new_argv.push_back (path);
+
     // envp is already adjusted for our needs.  But we need to shift argv
-    for (num_elements = 0; argv && argv[num_elements]; num_elements++) {
-        // this space intentionally left blank
+    for (unsigned i = 0; argv && argv[i]; ++i) {
+        new_argv.push_back (argv[i]);
     }
-    new_argv = static_cast<char **>(malloc (sizeof (char *) * (num_elements + 2)));
-    new_argv[0] = path;
-    for (i = 0; i < num_elements; i++) {
-        new_argv[i + 1] = argv[i];
-    }
-    new_argv[num_elements + 1] = 0;
 
     // Now actually run execve with our loader and adjusted argv
-    result = _execve (custom_loader, new_argv, envp);
-
-    // Cleanup on error
-    free (new_argv);
-    free (custom_loader);
-    return result;
+    return _execve (custom_loader.c_str (), c_vector_holder (new_argv), envp);
 }
 
-static int
+int
 execve_wrapper (const char *func, const char *path, char *const argv[], char *const envp[])
 {
-    char *new_path = NULL;
-    char **new_envp = NULL;
     int i, result;
 
-    static int (*_execve) (const char *, char *const[], char *const[]) =
-        (decltype(_execve)) dlsym (RTLD_NEXT, func);
+    static execve_t _execve = (decltype(_execve)) dlsym (RTLD_NEXT, func);
 
-    new_path = redirect_path (path);
+    if (path == NULL) {
+        return _execve (path, argv, envp);
+    }
+
+    std::string const& new_path = redirect_path (path);
 
     // Make sure we inject our original preload values, can't trust this
     // program to pass them along in envp for us.
-    new_envp = execve_copy_envp (envp);
-
-    result = _execve (new_path, argv, new_envp);
+    auto env_copy = execve_copy_envp (envp);
+    c_vector_holder new_envp (env_copy);
+    result = _execve (new_path.c_str (), argv, new_envp);
 
     if (result == -1 && errno == ENOENT) {
         // OK, get prepared for gross hacks here.  In order to run 32-bit ELF
@@ -644,7 +609,7 @@ execve_wrapper (const char *func, const char *path, char *const argv[], char *co
         // ld.so loader which will only work if the architecture matches.  So if
         // we failed to run it normally above because the loader couldn't find
         // something, try with our own 32-bit loader.
-        if (_access (new_path, F_OK) == 0) {
+        if (_access (new_path.c_str (), F_OK) == 0) {
             // Only actually try this if the path actually did exist.  That
             // means the ENOENT must have been a missing linked library or the
             // wrong ld.so loader.  Lets assume the latter and try to run as
@@ -653,14 +618,10 @@ execve_wrapper (const char *func, const char *path, char *const argv[], char *co
         }
     }
 
-    free (new_path);
-    for (i = 0; new_envp[i]; i++) {
-        free (new_envp[i]);
-    }
-    free (new_envp);
-
     return result;
 }
+
+} // anonymous namepsace
 
 extern "C" int
 execv (const char *path, char *const argv[])
