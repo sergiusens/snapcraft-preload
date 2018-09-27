@@ -16,3 +16,5 @@ apps:
     app-name:
         command: snapcraft-preload <binary>
 ```
+
+If you're using the `desktop-launch` launcher from the [ubuntu/snapcraft-desktop-helpers](https://github.com/ubuntu/snapcraft-desktop-helpers), place `snapcraft-preload` _after_ `desktop-launch` in the app command.
