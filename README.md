@@ -7,6 +7,9 @@ parts:
     snapcraft-preload:
         source: https://github.com/sergiusens/snapcraft-preload.git
         plugin: cmake
+        build-packages:
+          - gcc-multilib
+          - g++-multilib
 ```
 
 And precede your `apps` entry like this:
@@ -14,5 +17,5 @@ And precede your `apps` entry like this:
 ```yaml
 apps:
     app-name:
-        command: snapcraft-preload <binary>
+        command: bin/snapcraft-preload $SNAP/<binary>
 ```
