@@ -27,6 +27,7 @@
 #include <fcntl.h>
 #include <functional>
 #include <iostream>
+#include <semaphore.h>
 #include <sstream>
 #include <stdarg.h>
 #include <stdio.h>
@@ -35,6 +36,7 @@
 #include <sys/inotify.h>
 #include <sys/param.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <sys/un.h>
 #include <sys/vfs.h>
@@ -46,6 +48,10 @@
 #endif
 
 #define LITERAL_STRLEN(s) (sizeof (s) - 1)
+
+// Format is: 'sem.snap.SNAP_NAME.<something>'. So: 'sem.snap.' + '.' = 10
+#define MAX_SEM_NAME_SIZE NAME_MAX - 10
+#define SHM_DIR "/dev/shm"
 
 namespace
 {
@@ -332,6 +338,171 @@ redirect_open(Ts... as, va_separator, va_list va)
     return redirect_n<R, FUNC_NAME, REDIRECT_PATH_TYPE, PATH_IDX, Ts..., mode_t>(as..., mode);
 }
 
+// taken from https://git.launchpad.net/~jdstrand/+git/test-sem-open/tree/lib.c
+int rewrite_for_sem_open(const char *name, char *rewritten, size_t rmax)
+{
+    if (strlen(saved_snap_name.c_str()) + strlen(name) > MAX_SEM_NAME_SIZE) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+
+    const char *tmp = name;
+    if (tmp[0] == '/') {
+        // If specified with leading '/', just strip it to avoid
+        // having to mkdir(), etc
+        tmp = &name[1];
+    }
+
+    int n = snprintf(rewritten, rmax, "snap.%s.%s", saved_snap_name.c_str(), tmp);
+    if (n < 0 || n >= rmax) {
+        fprintf(stderr, "snprintf truncated\n");
+        return -1;
+    }
+    rewritten[rmax] = '\0';
+
+    return 0;
+}
+
+// taken from https://git.launchpad.net/~jdstrand/+git/test-sem-open/tree/lib.c
+template<typename R, const char *FUNC_NAME, typename REDIRECT_PATH_TYPE, size_t PATH_IDX, typename... Ts>
+inline R
+redirect_sem_open(Ts... as, va_separator, va_list va)
+{
+    mode_t mode;
+    unsigned int value;
+    const char *name = std::get<PATH_IDX>(std::tuple<Ts...>(as...));
+    int oflag = std::get<PATH_IDX+1>(std::tuple<Ts...>(as...));
+
+    // mode and value must be set with O_CREAT
+    if (oflag & O_CREAT) {
+        mode = va_arg(va, mode_t);
+        value = va_arg(va, unsigned int);
+        if (value > SEM_VALUE_MAX) {
+            errno = EINVAL;
+            return SEM_FAILED;
+        }
+    }
+
+    // Format the rewritten name
+    char rewritten[MAX_SEM_NAME_SIZE + 1];
+    if (rewrite_for_sem_open(name, rewritten, MAX_SEM_NAME_SIZE + 1) != 0) {
+        return SEM_FAILED;
+    }
+
+    if (oflag & O_CREAT) {
+        // glibc's sem_open with O_CREAT will create a file in /dev/shm
+        // by creating a tempfile, initializing it, hardlinking it and
+        // unlinking the tempfile. We:
+        // 1. create a temporary file in /dev/shm with rewritten path
+        //    as the template and the specified mode
+        // 2. initializing a sem_t with sem_init
+        // 3. writing the initialized sem_t to the temporary file using
+        //    sem_open()s declared value. We used '1' for pshared since
+        //    that is how glibc sets up a named semaphore
+        // 4. close the temporary file
+        // 5. hard link the temporary file to the rewritten path. If
+        //    O_EXCL is not specified, ignore EEXIST and just cleanup
+        //    as per documented behavior in 'man sem_open'. If O_EXCL
+        //    is specified and file exists, exit with error. If link is
+        //    successful, cleanup.
+        // 6. call glibc's sem_open() without O_CREAT|O_EXCL
+        //
+        // See glibc's fbtl/sem_open.c for more details
+
+        // First, calculate the requested path
+        char new_path[PATH_MAX] = { 0 };
+        // /sem. + '\0' = 6
+        int max_path_size = strlen(SHM_DIR) + strlen(rewritten) + 6;
+        if (max_path_size >= PATH_MAX) {
+            // Should never happen since PATH_MAX should be much
+            // larger than NAME_MAX, but be defensive.
+            errno = ENAMETOOLONG;
+            return SEM_FAILED;
+        }
+        int n = snprintf(new_path, max_path_size, "%s/sem.%s", SHM_DIR,
+                         rewritten);
+        if (n < 0 || n >= max_path_size) {
+            errno = ENAMETOOLONG;
+            return SEM_FAILED;
+        }
+        new_path[max_path_size - 1] = '\0';
+
+        // Then calculate the template path
+        char tmp[PATH_MAX] = { 0 };
+        n = snprintf(tmp, PATH_MAX, "%s/%s.XXXXXX", SHM_DIR,
+                     rewritten);
+        if (n < 0 || n >= PATH_MAX) {
+            errno = ENAMETOOLONG;
+            return SEM_FAILED;
+        }
+        tmp[PATH_MAX-1] = '\0';
+
+        // Next, create a temporary file
+		int fd = mkstemp(tmp);
+		if (fd < 0) {
+			return SEM_FAILED;
+		}
+
+        // Update the temporary file to have the requested mode
+		if (fchmod(fd, mode) < 0) {
+			close(fd);
+			unlink(tmp);
+			return SEM_FAILED;
+		}
+
+        // Then write out an empty semaphore and set the initial value.
+        // We use '1' for pshared since that is how glibc sets up the
+        // semaphore (see glibc's fbtl/sem_open.c)
+        sem_t initsem;
+        sem_init(&initsem, 1, value);
+        if (write(fd, &initsem, sizeof(sem_t)) < 0) {
+            close(fd);
+            unlink(new_path);
+            return SEM_FAILED;
+        }
+        close(fd);
+
+        // Then link the file into place. If the target exists and
+        // O_EXCL was not specified, just cleanup and proceed to open
+        // the existing file as per documented behavior in 'man
+        // sem_open'.
+        int existed = 0;
+        if (link(tmp, new_path) < 0) {
+            // Note: snapd initially didn't allow 'l' in its
+            // policy so we first try with link() since it is
+            // race-free but fallback to rename() if necessary.
+            if (errno == EACCES || errno == EPERM) {
+                fprintf(stderr, "sem_open() wrapper: hard linking tempfile denied. Falling back to rename()\n");
+                if (rename(tmp, new_path) < 0) {
+                    unlink(tmp);
+                    return SEM_FAILED;
+                }
+            } else if (oflag & O_EXCL || errno != EEXIST) {
+                unlink(tmp);
+                return SEM_FAILED;
+            }
+            existed = 1;
+        }
+        unlink(tmp);
+
+        // Then call sem_open() on the created file, stripping out the
+        // O_CREAT since we just created it
+        sem_t *sem =
+            redirect_n<R, FUNC_NAME, REDIRECT_PATH_TYPE, 0, const char*, int> (rewritten, oflag & ~(O_CREAT | O_EXCL));
+        if (sem == SEM_FAILED) {
+            unlink(new_path);
+            return SEM_FAILED;
+        }
+
+        return sem;
+    } else {
+        // without O_CREAT, just call sem_open with rewritten
+        return redirect_n<R, FUNC_NAME, REDIRECT_PATH_TYPE, 0, const char*, int> (rewritten, oflag);
+    }
+
+    return SEM_FAILED;
+}
+
 } // unnamed namespace
 
 extern "C"
@@ -398,8 +569,14 @@ int NAME (const char *path, int flags, ...) { va_list va; va_start(va, flags); i
 DECLARE_REDIRECT(NAME) \
 int NAME (int dirfp, const char *path, int flags, ...) { va_list va; va_start(va, flags); int ret = redirect_open<int, REDIRECT_NAME(NAME), ABSOLUTE_REDIRECT, 1, int, const char *, int>(dirfp, path, flags, va_separator(), va); va_end(va); return ret; }
 
+#define REDIRECT_SEM_OPEN(NAME) \
+DECLARE_REDIRECT(NAME) \
+sem_t *NAME (const char *path, int flags, ...) { va_list va; va_start(va, flags); sem_t *ret = redirect_sem_open<sem_t*, REDIRECT_NAME(NAME), NORMAL_REDIRECT, 0, const char *, int>(path, flags, va_separator(), va); va_end(va); return ret; }
+
 REDIRECT_1_2(FILE *, fopen, const char *)
 REDIRECT_1_1(int, unlink)
+REDIRECT_1_1(int, sem_unlink)
+REDIRECT_1_1(int, shm_unlink)
 REDIRECT_2_3_AT(int, unlinkat, int, int)
 REDIRECT_1_2(int, access, int)
 REDIRECT_1_2(int, eaccess, int)
@@ -442,6 +619,7 @@ REDIRECT_OPEN(open)
 REDIRECT_OPEN(open64)
 REDIRECT_OPEN_AT(openat)
 REDIRECT_OPEN_AT(openat64)
+REDIRECT_SEM_OPEN(sem_open)
 REDIRECT_2_3(int, inotify_add_watch, int, uint32_t)
 REDIRECT_1_4(int, scandir, struct dirent ***, filter_function_t<struct dirent>, compar_function_t<struct dirent>);
 REDIRECT_1_4(int, scandir64, struct dirent64 ***, filter_function_t<struct dirent64>, compar_function_t<struct dirent64>);
