@@ -8,8 +8,9 @@ parts:
         source: https://github.com/sergiusens/snapcraft-preload.git
         plugin: cmake
         build-packages:
-          - gcc-multilib
-          - g++-multilib
+          - on amd64:
+            - gcc-multilib
+            - g++-multilib
 ```
 
 And precede your `apps` entry like this:
