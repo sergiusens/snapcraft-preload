@@ -341,31 +341,6 @@ redirect_open(Ts... as, va_separator, va_list va)
     return redirect_n<R, FUNC_NAME, REDIRECT_PATH_TYPE, PATH_IDX, Ts..., mode_t>(as..., mode);
 }
 
-// taken from https://git.launchpad.net/~jdstrand/+git/test-sem-open/tree/lib.c
-int rewrite_for_sem_open(const char *name, char *rewritten, size_t rmax)
-{
-    if (strlen(saved_snap_name.c_str()) + strlen(name) > MAX_SEM_NAME_SIZE) {
-        errno = ENAMETOOLONG;
-        return -1;
-    }
-
-    const char *tmp = name;
-    if (tmp[0] == '/') {
-        // If specified with leading '/', just strip it to avoid
-        // having to mkdir(), etc
-        tmp = &name[1];
-    }
-
-    int n = snprintf(rewritten, rmax, "snap.%s.%s", saved_snap_name.c_str(), tmp);
-    if (n < 0 || n >= rmax) {
-        fprintf(stderr, "snprintf truncated\n");
-        return -1;
-    }
-    rewritten[rmax] = '\0';
-
-    return 0;
-}
-
 } // unnamed namespace
 
 extern "C"
