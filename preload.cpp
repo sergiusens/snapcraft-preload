@@ -189,6 +189,11 @@ redirect_path_full (std::string const& pathname, bool check_parent, bool only_if
         }
     }
 
+    // PulseAudio is exposed through the 'pulseaudio' interface
+    if (strncmp (pathname, "/dev/shm/pulse-shm-", 19) == 0) {
+        return strdup (pathname);
+    }
+
     // Some apps want to open shared memory in random locations. Here we will confine it to the
     // snaps allowed path.
     std::string redirected_pathname;
