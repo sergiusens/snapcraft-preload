@@ -663,7 +663,7 @@ __execve (const char *path, char *const argv[], char *const envp[])
 }
 
 // taken from https://git.launchpad.net/~jdstrand/+git/test-sem-open/tree/lib.c
-void debug(const char *s, ...)
+void debug_sem(const char *s, ...)
 {
 	if (secure_getenv("SEMWRAP_DEBUG")) {
 		va_list va;
@@ -682,7 +682,7 @@ const char *get_snap_name(void)
 		snapname = getenv("SNAP_NAME");
 	}
 	if (!snapname) {
-		debug("SNAP_NAME and SNAP_INSTANCE_NAME not set");
+		debug_sem("SNAP_NAME and SNAP_INSTANCE_NAME not set");
 	}
 	return snapname;
 }
@@ -718,15 +718,15 @@ extern "C" sem_t
 	mode_t mode;
 	unsigned int value;
 
-	debug("sem_open()");
-	debug("requested name: %s", name);
+	debug_sem("sem_open()");
+	debug_sem("requested name: %s", name);
 
 	// lookup the libc's sem_open() if we haven't already
 	if (!original_sem_open) {
 		dlerror();
 		original_sem_open = (sem_t*(*)(const char *, int, ...)) dlsym(RTLD_NEXT, "sem_open");
 		if (!original_sem_open) {
-			debug("could not find sem_open in libc");
+			debug_sem("could not find sem_open in libc");
 			return SEM_FAILED;
 		}
 		dlerror();
@@ -760,7 +760,7 @@ extern "C" sem_t
 	if (rewrite_for_sem_open(snapname, name, rewritten, MAX_SEM_NAME_SIZE + 1) != 0) {
 		return SEM_FAILED;
 	}
-	debug("rewritten name: %s", rewritten);
+	debug_sem("rewritten name: %s", rewritten);
 
 	if (oflag & O_CREAT) {
 		// glibc's sem_open with O_CREAT will create a file in /dev/shm
@@ -815,7 +815,7 @@ extern "C" sem_t
 		if (fd < 0) {
 			return SEM_FAILED;
 		}
-		debug("tmp name: %s", tmp);
+		debug_sem("tmp name: %s", tmp);
 
 		// Update the temporary file to have the requested mode
 		if (fchmod(fd, mode) < 0) {
@@ -883,15 +883,15 @@ extern "C" sem_t
 extern "C" int
 sem_unlink(const char *name)
 {
-	debug("sem_unlink()");
-	debug("requested name: %s", name);
+	debug_sem("sem_unlink()");
+	debug_sem("requested name: %s", name);
 
 	// lookup the libc's sem_unlink() if we haven't already
 	if (!original_sem_unlink) {
 		dlerror();
 		original_sem_unlink = (int(*)(const char *))dlsym(RTLD_NEXT, "sem_unlink");
 		if (!original_sem_unlink) {
-			debug("could not find sem_unlink in libc");
+			debug_sem("could not find sem_unlink in libc");
 			return -1;
 		}
 		dlerror();
@@ -909,7 +909,7 @@ sem_unlink(const char *name)
 	if (rewrite_for_sem_open(snapname, name, rewritten, MAX_SEM_NAME_SIZE + 1) != 0) {
 		return -1;
 	}
-	debug("rewritten name: %s", rewritten);
+	debug_sem("rewritten name: %s", rewritten);
 
 	return original_sem_unlink(rewritten);
 }
