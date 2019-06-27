@@ -842,16 +842,7 @@ extern "C" sem_t
 		// sem_open'.
 		int existed = 0;
 		if (link(tmp, path) < 0) {
-			// Note: snapd initially didn't allow 'l' in its
-			// policy so we first try with link() since it is
-			// race-free but fallback to rename() if necessary.
-			if (errno == EACCES || errno == EPERM) {
-				fprintf(stderr, "sem_open() wrapper: hard linking tempfile denied. Falling back to rename()\n");
-				if (rename(tmp, path) < 0) {
-					unlink(tmp);
-					return SEM_FAILED;
-				}
-			} else if (oflag & O_EXCL || errno != EEXIST) {
+			if (oflag & O_EXCL || errno != EEXIST) {
 				unlink(tmp);
 				return SEM_FAILED;
 			}
