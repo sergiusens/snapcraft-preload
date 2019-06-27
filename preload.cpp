@@ -768,8 +768,8 @@ extern "C" sem_t
 		// unlinking the tempfile. We:
 		// 1. create a temporary file in /dev/shm with rewritten path
 		//    as the template and the specified mode
-		// 2. initializing a sem_t with sem_init
-		// 3. writing the initialized sem_t to the temporary file using
+		// 2. initialize a sem_t with sem_init
+		// 3. write the initialized sem_t to the temporary file using
 		//    sem_open()s declared value. We used '1' for pshared since
 		//    that is how glibc sets up a named semaphore
 		// 4. close the temporary file
@@ -784,7 +784,7 @@ extern "C" sem_t
 
 		// First, calculate the requested path
 		char path[PATH_MAX] = { 0 };
-		// /sem. + '/0' = 14
+		// /sem. + '\0' = 6
 		int max_path_size = strlen(SHM_DIR) + strlen(rewritten) + 6;
 		if (max_path_size >= PATH_MAX) {
 			// Should never happen since PATH_MAX should be much
