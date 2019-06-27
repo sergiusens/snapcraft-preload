@@ -411,7 +411,6 @@ int NAME (int dirfp, const char *path, int flags, ...) { va_list va; va_start(va
 
 REDIRECT_1_2(FILE *, fopen, const char *)
 REDIRECT_1_1(int, unlink)
-REDIRECT_1_1(int, shm_unlink)
 REDIRECT_2_3_AT(int, unlinkat, int, int)
 REDIRECT_1_2(int, access, int)
 REDIRECT_1_2(int, eaccess, int)
