@@ -58,7 +58,7 @@ const std::string DEFAULT_DEVSHM = "/dev/shm/";
 
 std::string saved_snapcraft_preload;
 std::string saved_varlib;
-std::string saved_snap_name;
+std::string saved_snap_instance_name;
 std::string saved_snap_revision;
 std::string saved_snap_devshm;
 
@@ -116,9 +116,9 @@ Initializer::Initializer()
     }
 
     saved_varlib = getenv_string ("SNAP_DATA");
-    saved_snap_name = getenv_string ("SNAP_NAME");
+    saved_snap_instance_name = getenv_string ("SNAP_INSTANCE_NAME");
     saved_snap_revision = getenv_string ("SNAP_REVISION");
-    saved_snap_devshm = DEFAULT_DEVSHM + "snap." + saved_snap_name;
+    saved_snap_devshm = DEFAULT_DEVSHM + "snap." + saved_snap_instance_name;
 
     // Pull out each absolute-pathed libsnapcraft-preload.so we find.  Better to
     // accidentally include some other libsnapcraft-preload than not propagate
