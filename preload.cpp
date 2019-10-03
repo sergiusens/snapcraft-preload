@@ -51,12 +51,14 @@ namespace
 {
 const std::string SNAPCRAFT_LIBNAME = SNAPCRAFT_LIBNAME_DEF;
 const std::string SNAPCRAFT_PRELOAD = "SNAPCRAFT_PRELOAD";
+const std::string SNAPCRAFT_PRELOAD_REDIRECT_ONLY_SHM = "SNAPCRAFT_PRELOAD_REDIRECT_ONLY_SHM";
 const std::string LD_PRELOAD = "LD_PRELOAD";
 const std::string LD_LINUX = "/lib/ld-linux.so.2";
 const std::string DEFAULT_VARLIB = "/var/lib";
 const std::string DEFAULT_DEVSHM = "/dev/shm/";
 
 std::string saved_snapcraft_preload;
+bool saved_snapcraft_preload_redirect_only_shm;
 std::string saved_varlib;
 std::string saved_snap_name;
 std::string saved_snap_revision;
@@ -114,6 +116,8 @@ Initializer::Initializer()
     if (saved_snapcraft_preload.empty ()) {
         return;
     }
+
+    saved_snapcraft_preload_redirect_only_shm = getenv_string(SNAPCRAFT_PRELOAD_REDIRECT_ONLY_SHM).compare("1") == 0;
 
     saved_varlib = getenv_string ("SNAP_DATA");
     saved_snap_name = getenv_string ("SNAP_NAME");
@@ -177,6 +181,21 @@ redirect_path_full (std::string const& pathname, bool check_parent, bool only_if
         return pathname;
     }
 
+    // Some apps want to open shared memory in random locations. Here we will confine it to the
+    // snaps allowed path.
+    std::string redirected_pathname;
+
+    if (str_starts_with (pathname, DEFAULT_DEVSHM) && !str_starts_with (pathname, saved_snap_devshm)) {
+        std::string new_pathname = pathname.substr(DEFAULT_DEVSHM.size());
+        redirected_pathname = saved_snap_devshm + '.' + new_pathname;
+        string_length_sanitize (redirected_pathname);
+        return redirected_pathname;
+    }
+
+    if (saved_snapcraft_preload_redirect_only_shm) {
+      return pathname;
+    }
+
     // And each app should have its own /var/lib writable tree.  Here, we want
     // to support reading the base system's files if they exist, else let the app
     // play in /var/lib themselves.  So we reverse the normal check: first see if
@@ -187,17 +206,6 @@ redirect_path_full (std::string const& pathname, bool check_parent, bool only_if
         } else {
             return pathname;
         }
-    }
-
-    // Some apps want to open shared memory in random locations. Here we will confine it to the
-    // snaps allowed path.
-    std::string redirected_pathname;
-
-    if (str_starts_with (pathname, DEFAULT_DEVSHM) && !str_starts_with (pathname, saved_snap_devshm)) {
-        std::string new_pathname = pathname.substr(DEFAULT_DEVSHM.size());
-        redirected_pathname = saved_snap_devshm + '.' + new_pathname;
-        string_length_sanitize (redirected_pathname);
-        return redirected_pathname;
     }
 
     redirected_pathname = preload_dir;
