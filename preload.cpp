@@ -26,6 +26,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <functional>
+#include <grp.h>
 #include <iostream>
 #include <sstream>
 #include <stdarg.h>
@@ -47,6 +48,7 @@
 
 #define LITERAL_STRLEN(s) (sizeof (s) - 1)
 
+// anonymous/unnamed namepsace
 namespace
 {
 const std::string SNAPCRAFT_LIBNAME = SNAPCRAFT_LIBNAME_DEF;
@@ -75,6 +77,8 @@ using compar_function_t = int (*)(const dirent_t **, const dirent_t **);
 
 using socket_action_t = int (*) (int, const struct sockaddr *, socklen_t);
 using execve_t = int (*) (const char *, char *const[], char *const[]);
+using setgroups_t = int (*) (size_t, const gid_t *);
+using initgroups_t = int (*) (const char *, const gid_t);
 
 inline std::string
 getenv_string(const std::string& varname)
@@ -332,7 +336,7 @@ redirect_open(Ts... as, va_separator, va_list va)
     return redirect_n<R, FUNC_NAME, REDIRECT_PATH_TYPE, PATH_IDX, Ts..., mode_t>(as..., mode);
 }
 
-} // unnamed namespace
+} // anonymous/unnamed namespace
 
 extern "C"
 {
@@ -501,6 +505,7 @@ connect (int sockfd, const struct sockaddr *addr, socklen_t addrlen)
     return socket_action (_connect, sockfd, addr, addrlen);
 }
 
+// anonymous/unnamed namespace
 namespace
 {
 void
@@ -630,7 +635,7 @@ execve_wrapper (const char *func, const char *path, char *const argv[], char *co
     return result;
 }
 
-} // anonymous namepsace
+} // anonymous/unnamed namepsace
 
 extern "C" int
 execv (const char *path, char *const argv[])
@@ -648,4 +653,27 @@ extern "C" int
 __execve (const char *path, char *const argv[], char *const envp[])
 {
     return execve_wrapper ("__execve", path, argv, envp);
+}
+
+// setgroups/initgroups - https://forum.snapcraft.io/t/system-usernames/13386
+extern "C" int
+setgroups (size_t size, const gid_t *list)
+{
+    static setgroups_t _setgroups =
+        (decltype(_setgroups)) dlsym (RTLD_NEXT, "setgroups");
+
+    // Call setgroups in the non-portable, Linux-only manner that works with
+    // the sandbox.
+    return _setgroups (0, NULL);
+}
+
+extern "C" int
+initgroups (const char *user, const gid_t)
+{
+    static initgroups_t _initgroups =
+        (decltype(_initgroups)) dlsym (RTLD_NEXT, "initgroups");
+
+    // Just clear all the groups since we can't initialize them from inside the
+    // sandbox.
+    return setgroups (0, NULL);
 }
