@@ -301,13 +301,18 @@ struct TARGET_REDIRECT {
     static inline std::string redirect (const std::string& path) { return redirect_path_target (path); }
 };
 
-template<typename R, const char *FUNC_NAME, typename REDIRECT_PATH_TYPE, size_t PATH_IDX, typename... Ts>
+template<typename R, const char *FUNC_NAME, const char *VERSION, typename REDIRECT_PATH_TYPE, size_t PATH_IDX, typename... Ts>
 inline R
 redirect_n(Ts... as)
 {
     std::tuple<Ts...> tpl(as...);
     const char *path = std::get<PATH_IDX>(tpl);
-    static std::function<R(Ts...)> func (reinterpret_cast<R(*)(Ts...)> (dlsym (RTLD_NEXT, FUNC_NAME)));
+    static std::function<R(Ts...)> func = NULL;
+    if (VERSION) {
+        func = (reinterpret_cast<R(*)(Ts...)> (dlvsym (RTLD_NEXT, FUNC_NAME, VERSION)));
+    } else {
+        func = (reinterpret_cast<R(*)(Ts...)> (dlsym (RTLD_NEXT, FUNC_NAME)));
+    }
 
     if (path != NULL) {
         std::string const& new_path = REDIRECT_PATH_TYPE::redirect (path);
@@ -320,16 +325,16 @@ redirect_n(Ts... as)
     return func (std::forward<Ts>(as)...);
 }
 
-template<typename R, const char *FUNC_NAME, typename REDIRECT_PATH_TYPE, typename REDIRECT_TARGET_TYPE, typename... Ts>
+template<typename R, const char *FUNC_NAME, typename REDIRECT_PATH_TYPE, typename REDIRECT_TARGET_TYPE, const char *VERSION, typename... Ts>
 inline R
 redirect_target(const char *path, const char *target, Ts... as)
 {
     std::string const& new_target = REDIRECT_PATH_TYPE::redirect (target ? target : "");
-    return redirect_n<R, FUNC_NAME, REDIRECT_PATH_TYPE, 0, const char*, const char*, Ts...> (path, new_target.c_str ());
+    return redirect_n<R, FUNC_NAME, VERSION, REDIRECT_PATH_TYPE, 0, const char*, const char*, Ts...> (path, new_target.c_str ());
 }
 
 struct va_separator {};
-template<typename R, const char *FUNC_NAME, typename REDIRECT_PATH_TYPE, size_t PATH_IDX, typename... Ts>
+template<typename R, const char *FUNC_NAME, typename REDIRECT_PATH_TYPE, const char *VERSION, size_t PATH_IDX, typename... Ts>
 inline R
 redirect_open(Ts... as, va_separator, va_list va)
 {
@@ -340,128 +345,132 @@ redirect_open(Ts... as, va_separator, va_list va)
         mode = va_arg (va, mode_t);
     }
 
-    return redirect_n<R, FUNC_NAME, REDIRECT_PATH_TYPE, PATH_IDX, Ts..., mode_t>(as..., mode);
+    return redirect_n<R, FUNC_NAME, VERSION, REDIRECT_PATH_TYPE, PATH_IDX, Ts..., mode_t>(as..., mode);
 }
 
 } // unnamed namespace
+
+constexpr const char *VERSION_DEFAULT = NULL;
+constexpr const char VERSION_GLIBC_2_3[] = "GLIBC_2.3";
 
 extern "C"
 {
 #define ARG(A) , A
 #define REDIRECT_NAME(NAME) _ ## NAME ## _preload
+
 #define DECLARE_REDIRECT(NAME) \
 constexpr const char REDIRECT_NAME(NAME)[] = #NAME;
 
-#define REDIRECT_1(RET, NAME, REDIR_TYPE, SIG, ARGS) \
+#define REDIRECT_1(RET, NAME, VERSION, REDIR_TYPE, SIG, ARGS) \
 DECLARE_REDIRECT(NAME) \
-RET NAME (const char *path SIG) { return redirect_n<RET, REDIRECT_NAME(NAME), REDIR_TYPE, 0>(path ARGS); }
+RET NAME (const char *path SIG) { return redirect_n<RET, REDIRECT_NAME(NAME), VERSION, REDIR_TYPE, 0>(path ARGS); }
 
-#define REDIRECT_2(RET, NAME, REDIR_TYPE, T1, SIG, ARGS) \
+#define REDIRECT_2(RET, NAME, VERSION, REDIR_TYPE, T1, SIG, ARGS) \
 DECLARE_REDIRECT(NAME) \
-RET NAME (T1 a1, const char *path SIG) { return redirect_n<RET, REDIRECT_NAME(NAME), REDIR_TYPE, 1>(a1, path ARGS); }
+RET NAME (T1 a1, const char *path SIG) { return redirect_n<RET, REDIRECT_NAME(NAME), VERSION, REDIR_TYPE, 1>(a1, path ARGS); }
 
-#define REDIRECT_3(RET, NAME, REDIR_TYPE, T1, T2, SIG, ARGS) \
+#define REDIRECT_3(RET, NAME, VERSION, REDIR_TYPE, T1, T2, SIG, ARGS) \
 DECLARE_REDIRECT(NAME) \
-RET NAME (T1 a1, T2 a2, const char *path SIG) { return redirect_n<RET, REDIRECT_NAME(NAME), REDIR_TYPE, 2>(a1, a2, path ARGS); }
+RET NAME (T1 a1, T2 a2, const char *path SIG) { return redirect_n<RET, REDIRECT_NAME(NAME), VERSION, REDIR_TYPE, 2>(a1, a2, path ARGS); }
 
-#define REDIRECT_1_1(RET, NAME) \
-REDIRECT_1(RET, NAME, NORMAL_REDIRECT, ,)
+#define REDIRECT_1_1(RET, NAME, VERSION) \
+REDIRECT_1(RET, NAME, VERSION, NORMAL_REDIRECT, ,)
 
-#define REDIRECT_1_2(RET, NAME, T2) \
-REDIRECT_1(RET, NAME, NORMAL_REDIRECT, ARG(T2 a2), ARG(a2))
+#define REDIRECT_1_2(RET, NAME, VERSION, T2) \
+REDIRECT_1(RET, NAME, VERSION, NORMAL_REDIRECT, ARG(T2 a2), ARG(a2))
 
-#define REDIRECT_1_2_AT(RET, NAME, T2) \
-REDIRECT_1(RET, NAME, ABSOLUTE_REDIRECT, ARG(T2 a2), ARG(a2))
+#define REDIRECT_1_2_AT(RET, NAME, VERSION, T2) \
+REDIRECT_1(RET, NAME, VERSION, ABSOLUTE_REDIRECT, ARG(T2 a2), ARG(a2))
 
-#define REDIRECT_1_3(RET, NAME, T2, T3) \
-REDIRECT_1(RET, NAME, NORMAL_REDIRECT, ARG(T2 a2) ARG(T3 a3), ARG(a2) ARG(a3))
+#define REDIRECT_1_3(RET, NAME, VERSION, T2, T3) \
+REDIRECT_1(RET, NAME, VERSION, NORMAL_REDIRECT, ARG(T2 a2) ARG(T3 a3), ARG(a2) ARG(a3))
 
-#define REDIRECT_1_4(RET, NAME, T2, T3, T4) \
-REDIRECT_1(RET, NAME, NORMAL_REDIRECT, ARG(T2 a2) ARG(T3 a3) ARG(T4 a4), ARG(a2) ARG(a3) ARG(a4))
+#define REDIRECT_1_4(RET, NAME, VERSION, T2, T3, T4) \
+REDIRECT_1(RET, NAME, VERSION, NORMAL_REDIRECT, ARG(T2 a2) ARG(T3 a3) ARG(T4 a4), ARG(a2) ARG(a3) ARG(a4))
 
-#define REDIRECT_2_2(RET, NAME, T1) \
-REDIRECT_2(RET, NAME, NORMAL_REDIRECT, T1, ,)
+#define REDIRECT_2_2(RET, NAME, VERSION, T1) \
+REDIRECT_2(RET, NAME, VERSION, NORMAL_REDIRECT, T1, ,)
 
-#define REDIRECT_2_3(RET, NAME, T1, T3) \
-REDIRECT_2(RET, NAME, NORMAL_REDIRECT, T1, ARG(T3 a3), ARG(a3))
+#define REDIRECT_2_3(RET, NAME, VERSION, T1, T3) \
+REDIRECT_2(RET, NAME, VERSION, NORMAL_REDIRECT, T1, ARG(T3 a3), ARG(a3))
 
-#define REDIRECT_2_3_AT(RET, NAME, T1, T3) \
-REDIRECT_2(RET, NAME, ABSOLUTE_REDIRECT, T1, ARG(T3 a3), ARG(a3))
+#define REDIRECT_2_3_AT(RET, NAME, VERSION, T1, T3) \
+REDIRECT_2(RET, NAME, VERSION, ABSOLUTE_REDIRECT, T1, ARG(T3 a3), ARG(a3))
 
-#define REDIRECT_2_4_AT(RET, NAME, T1, T3, T4) \
-REDIRECT_2(RET, NAME, ABSOLUTE_REDIRECT, T1, ARG(T3 a3) ARG(T4 a4), ARG(a3) ARG(a4))
+#define REDIRECT_2_4_AT(RET, NAME, VERSION, T1, T3, T4) \
+REDIRECT_2(RET, NAME, VERSION, ABSOLUTE_REDIRECT, T1, ARG(T3 a3) ARG(T4 a4), ARG(a3) ARG(a4))
 
-#define REDIRECT_2_5_AT(RET, NAME, T1, T3, T4, T5) \
-REDIRECT_2(RET, NAME, ABSOLUTE_REDIRECT, T1, ARG(T3 a3) ARG(T4 a4) ARG(T5 a5), ARG(a3) ARG(a4) ARG(a5))
+#define REDIRECT_2_5_AT(RET, NAME, VERSION, T1, T3, T4, T5) \
+REDIRECT_2(RET, NAME, VERSION, ABSOLUTE_REDIRECT, T1, ARG(T3 a3) ARG(T4 a4) ARG(T5 a5), ARG(a3) ARG(a4) ARG(a5))
 
-#define REDIRECT_3_5(RET, NAME, T1, T2, T4, T5) \
-REDIRECT_3(RET, NAME, NORMAL_REDIRECT, T1, T2, ARG(T4 a4) ARG(T5 a5), ARG(a4) ARG(a5))
+#define REDIRECT_3_5(RET, NAME, VERSION, T1, T2, T4, T5) \
+REDIRECT_3(RET, NAME, VERSION, NORMAL_REDIRECT, T1, T2, ARG(T4 a4) ARG(T5 a5), ARG(a4) ARG(a5))
 
-#define REDIRECT_TARGET(RET, NAME) \
+#define REDIRECT_TARGET(RET, NAME, VERSION) \
 DECLARE_REDIRECT(NAME) \
-RET NAME (const char *path, const char *target) { return redirect_target<RET, REDIRECT_NAME(NAME), NORMAL_REDIRECT, TARGET_REDIRECT>(path, target); }
+RET NAME (const char *path, const char *target) { return redirect_target<RET, REDIRECT_NAME(NAME), NORMAL_REDIRECT, TARGET_REDIRECT, VERSION>(path, target); }
 
-#define REDIRECT_OPEN(NAME) \
+#define REDIRECT_OPEN(NAME, VERSION) \
 DECLARE_REDIRECT(NAME) \
-int NAME (const char *path, int flags, ...) { va_list va; va_start(va, flags); int ret = redirect_open<int, REDIRECT_NAME(NAME), NORMAL_REDIRECT, 0, const char *, int>(path, flags, va_separator(), va); va_end(va); return ret; }
+int NAME (const char *path, int flags, ...) { va_list va; va_start(va, flags); int ret = redirect_open<int, REDIRECT_NAME(NAME), NORMAL_REDIRECT, VERSION, 0, const char *, int>(path, flags, va_separator(), va); va_end(va); return ret; }
 
-#define REDIRECT_OPEN_AT(NAME) \
+#define REDIRECT_OPEN_AT(NAME, VERSION) \
 DECLARE_REDIRECT(NAME) \
-int NAME (int dirfp, const char *path, int flags, ...) { va_list va; va_start(va, flags); int ret = redirect_open<int, REDIRECT_NAME(NAME), ABSOLUTE_REDIRECT, 1, int, const char *, int>(dirfp, path, flags, va_separator(), va); va_end(va); return ret; }
+int NAME (int dirfp, const char *path, int flags, ...) { va_list va; va_start(va, flags); int ret = redirect_open<int, REDIRECT_NAME(NAME), ABSOLUTE_REDIRECT, VERSION, 1, int, const char *, int>(dirfp, path, flags, va_separator(), va); va_end(va); return ret; }
 
-REDIRECT_1_2(FILE *, fopen, const char *)
-REDIRECT_1_1(int, unlink)
-REDIRECT_2_3_AT(int, unlinkat, int, int)
-REDIRECT_1_2(int, access, int)
-REDIRECT_1_2(int, eaccess, int)
-REDIRECT_1_2(int, euidaccess, int)
-REDIRECT_2_4_AT(int, faccessat, int, int, int)
-REDIRECT_1_2(int, stat, struct stat *)
-REDIRECT_1_2(int, stat64, struct stat64 *)
-REDIRECT_1_2(int, lstat, struct stat *)
-REDIRECT_1_2(int, lstat64, struct stat64 *)
-REDIRECT_1_2(int, creat, mode_t)
-REDIRECT_1_2(int, creat64, mode_t)
-REDIRECT_1_2(int, truncate, off_t)
-REDIRECT_2_2(char *, bindtextdomain, const char *)
-REDIRECT_2_3(int, xstat, int, struct stat *)
-REDIRECT_2_3(int, __xstat, int, struct stat *)
-REDIRECT_2_3(int, __xstat64, int, struct stat64 *)
-REDIRECT_2_3(int, __lxstat, int, struct stat *)
-REDIRECT_2_3(int, __lxstat64, int, struct stat64 *)
-REDIRECT_3_5(int, __fxstatat, int, int, struct stat *, int)
-REDIRECT_3_5(int, __fxstatat64, int, int, struct stat64 *, int)
-REDIRECT_1_2(int, statfs, struct statfs *)
-REDIRECT_1_2(int, statfs64, struct statfs64 *)
-REDIRECT_1_2(int, statvfs, struct statvfs *)
-REDIRECT_1_2(int, statvfs64, struct statvfs64 *)
-REDIRECT_1_2(long, pathconf, int)
-REDIRECT_1_3(int, mknod, mode_t, dev_t)
-REDIRECT_1_1(DIR *, opendir)
-REDIRECT_1_2(int, mkdir, mode_t)
-REDIRECT_1_1(int, rmdir)
-REDIRECT_1_3(int, chown, uid_t, gid_t)
-REDIRECT_1_3(int, lchown, uid_t, gid_t)
-REDIRECT_1_2(int, chmod, mode_t)
-REDIRECT_1_2(int, lchmod, mode_t)
-REDIRECT_1_1(int, chdir)
-REDIRECT_1_3(ssize_t, readlink, char *, size_t)
-REDIRECT_1_2(char *, realpath, char *)
-REDIRECT_TARGET(int, link)
-REDIRECT_TARGET(int, rename)
-REDIRECT_OPEN(open)
-REDIRECT_OPEN(open64)
-REDIRECT_OPEN_AT(openat)
-REDIRECT_OPEN_AT(openat64)
-REDIRECT_2_3(int, inotify_add_watch, int, uint32_t)
-REDIRECT_1_4(int, scandir, struct dirent ***, filter_function_t<struct dirent>, compar_function_t<struct dirent>);
-REDIRECT_1_4(int, scandir64, struct dirent64 ***, filter_function_t<struct dirent64>, compar_function_t<struct dirent64>);
-REDIRECT_2_5_AT(int, scandirat, int, struct dirent ***, filter_function_t<struct dirent>, compar_function_t<struct dirent>);
-REDIRECT_2_5_AT(int, scandirat64, int, struct dirent64 ***, filter_function_t<struct dirent64>, compar_function_t<struct dirent64>);
+REDIRECT_1_2(FILE *, fopen, VERSION_DEFAULT, const char *)
+REDIRECT_1_1(int, unlink, VERSION_DEFAULT)
+REDIRECT_2_3_AT(int, unlinkat, VERSION_DEFAULT, int, int)
+REDIRECT_1_2(int, access, VERSION_DEFAULT, int)
+REDIRECT_1_2(int, eaccess, VERSION_DEFAULT, int)
+REDIRECT_1_2(int, euidaccess, VERSION_DEFAULT, int)
+REDIRECT_2_4_AT(int, faccessat, VERSION_DEFAULT, int, int, int)
+REDIRECT_1_2(int, stat, VERSION_DEFAULT, struct stat *)
+REDIRECT_1_2(int, stat64, VERSION_DEFAULT, struct stat64 *)
+REDIRECT_1_2(int, lstat, VERSION_DEFAULT, struct stat *)
+REDIRECT_1_2(int, lstat64, VERSION_DEFAULT, struct stat64 *)
+REDIRECT_1_2(int, creat, VERSION_DEFAULT, mode_t)
+REDIRECT_1_2(int, creat64, VERSION_DEFAULT, mode_t)
+REDIRECT_1_2(int, truncate, VERSION_DEFAULT, off_t)
+REDIRECT_2_2(char *, bindtextdomain, VERSION_DEFAULT, const char *)
+REDIRECT_2_3(int, xstat, VERSION_DEFAULT, int, struct stat *)
+REDIRECT_2_3(int, __xstat, VERSION_DEFAULT, int, struct stat *)
+REDIRECT_2_3(int, __xstat64, VERSION_DEFAULT, int, struct stat64 *)
+REDIRECT_2_3(int, __lxstat, VERSION_DEFAULT, int, struct stat *)
+REDIRECT_2_3(int, __lxstat64, VERSION_DEFAULT, int, struct stat64 *)
+REDIRECT_3_5(int, __fxstatat, VERSION_DEFAULT, int, int, struct stat *, int)
+REDIRECT_3_5(int, __fxstatat64, VERSION_DEFAULT, int, int, struct stat64 *, int)
+REDIRECT_1_2(int, statfs, VERSION_DEFAULT, struct statfs *)
+REDIRECT_1_2(int, statfs64, VERSION_DEFAULT, struct statfs64 *)
+REDIRECT_1_2(int, statvfs, VERSION_DEFAULT, struct statvfs *)
+REDIRECT_1_2(int, statvfs64, VERSION_DEFAULT, struct statvfs64 *)
+REDIRECT_1_2(long, pathconf, VERSION_DEFAULT, int)
+REDIRECT_1_3(int, mknod, VERSION_DEFAULT, mode_t, dev_t)
+REDIRECT_1_1(DIR *, opendir, VERSION_DEFAULT)
+REDIRECT_1_2(int, mkdir, VERSION_DEFAULT, mode_t)
+REDIRECT_1_1(int, rmdir, VERSION_DEFAULT)
+REDIRECT_1_3(int, chown, VERSION_DEFAULT, uid_t, gid_t)
+REDIRECT_1_3(int, lchown, VERSION_DEFAULT, uid_t, gid_t)
+REDIRECT_1_2(int, chmod, VERSION_DEFAULT, mode_t)
+REDIRECT_1_2(int, lchmod, VERSION_DEFAULT, mode_t)
+REDIRECT_1_1(int, chdir, VERSION_DEFAULT)
+REDIRECT_1_3(ssize_t, readlink, VERSION_DEFAULT, char *, size_t)
+REDIRECT_1_2(char *, realpath, VERSION_GLIBC_2_3, char *)
+REDIRECT_TARGET(int, link, VERSION_DEFAULT)
+REDIRECT_TARGET(int, rename, VERSION_DEFAULT)
+REDIRECT_OPEN(open, VERSION_DEFAULT)
+REDIRECT_OPEN(open64, VERSION_DEFAULT)
+REDIRECT_OPEN_AT(openat, VERSION_DEFAULT)
+REDIRECT_OPEN_AT(openat64, VERSION_DEFAULT)
+REDIRECT_2_3(int, inotify_add_watch, VERSION_DEFAULT, int, uint32_t)
+REDIRECT_1_4(int, scandir, VERSION_DEFAULT, struct dirent ***, filter_function_t<struct dirent>, compar_function_t<struct dirent>);
+REDIRECT_1_4(int, scandir64, VERSION_DEFAULT, struct dirent64 ***, filter_function_t<struct dirent64>, compar_function_t<struct dirent64>);
+REDIRECT_2_5_AT(int, scandirat, VERSION_DEFAULT, int, struct dirent ***, filter_function_t<struct dirent>, compar_function_t<struct dirent>);
+REDIRECT_2_5_AT(int, scandirat64, VERSION_DEFAULT, int, struct dirent64 ***, filter_function_t<struct dirent64>, compar_function_t<struct dirent64>);
 
 // non-absolute library paths aren't simply relative paths, they need
 // a whole lookup algorithm
-REDIRECT_1_2_AT(void *, dlopen, int);
+REDIRECT_1_2_AT(void *, dlopen, VERSION_DEFAULT, int);
 }
 
 static int
@@ -604,7 +613,7 @@ execve32_wrapper (execve_t _execve, const std::string& path, char *const argv[],
 int
 execve_wrapper (const char *func, const char *path, char *const argv[], char *const envp[])
 {
-    int i, result;
+    int result;
 
     static execve_t _execve = (decltype(_execve)) dlsym (RTLD_NEXT, func);
 
