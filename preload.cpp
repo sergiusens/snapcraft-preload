@@ -27,6 +27,7 @@
 #include <fcntl.h>
 #include <functional>
 #include <iostream>
+#include <semaphore.h>
 #include <sstream>
 #include <stdarg.h>
 #include <stdio.h>
@@ -35,6 +36,7 @@
 #include <sys/inotify.h>
 #include <sys/param.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <sys/un.h>
 #include <sys/vfs.h>
@@ -47,6 +49,10 @@
 
 #define LITERAL_STRLEN(s) (sizeof (s) - 1)
 
+// Format is: 'sem.snap.SNAP_NAME.<something>'. So: 'sem.snap.' + '.' = 10
+#define MAX_SEM_NAME_SIZE NAME_MAX - 10
+#define SHM_DIR "/dev/shm"
+
 namespace
 {
 const std::string SNAPCRAFT_LIBNAME = SNAPCRAFT_LIBNAME_DEF;
@@ -57,12 +63,16 @@ const std::string LD_LINUX = "/lib/ld-linux.so.2";
 const std::string DEFAULT_VARLIB = "/var/lib";
 const std::string DEFAULT_DEVSHM = "/dev/shm/";
 
+static sem_t *(*original_sem_open) (const char *, int, ...);
+static int (*original_sem_unlink) (const char *);
+
 std::string saved_snapcraft_preload;
 bool saved_snapcraft_preload_redirect_only_shm;
 std::string saved_varlib;
 std::string saved_snap_instance_name;
 std::string saved_snap_revision;
 std::string saved_snap_devshm;
+std::string saved_snap_sem;
 
 std::vector<std::string> saved_ld_preloads;
 
@@ -123,6 +133,7 @@ Initializer::Initializer()
     saved_snap_instance_name = getenv_string ("SNAP_INSTANCE_NAME");
     saved_snap_revision = getenv_string ("SNAP_REVISION");
     saved_snap_devshm = DEFAULT_DEVSHM + "snap." + saved_snap_instance_name;
+    saved_snap_sem = DEFAULT_DEVSHM + "sem.snap." + saved_snap_instance_name;
 
     // Pull out each absolute-pathed libsnapcraft-preload.so we find.  Better to
     // accidentally include some other libsnapcraft-preload than not propagate
@@ -185,7 +196,7 @@ redirect_path_full (std::string const& pathname, bool check_parent, bool only_if
     // snaps allowed path.
     std::string redirected_pathname;
 
-    if (str_starts_with (pathname, DEFAULT_DEVSHM) && !str_starts_with (pathname, saved_snap_devshm)) {
+    if (str_starts_with (pathname, DEFAULT_DEVSHM) && !str_starts_with (pathname, saved_snap_devshm) && !str_starts_with(pathname, saved_snap_sem)) {
         std::string new_pathname = pathname.substr(DEFAULT_DEVSHM.size());
         redirected_pathname = saved_snap_devshm + '.' + new_pathname;
         string_length_sanitize (redirected_pathname);
@@ -648,4 +659,247 @@ extern "C" int
 __execve (const char *path, char *const argv[], char *const envp[])
 {
     return execve_wrapper ("__execve", path, argv, envp);
+}
+
+// taken from https://git.launchpad.net/~jdstrand/+git/test-sem-open/tree/lib.c
+void debug_sem(const char *s, ...)
+{
+	if (secure_getenv("SEMWRAP_DEBUG")) {
+		va_list va;
+		va_start(va, s);
+		fprintf(stderr, "SEMWRAP: ");
+		vfprintf(stderr, s, va);
+		va_end(va);
+		fprintf(stderr, "\n");
+	}
+}
+
+const char *get_snap_name(void)
+{
+	const char *snapname = getenv("SNAP_INSTANCE_NAME");
+	if (!snapname) {
+		snapname = getenv("SNAP_NAME");
+	}
+	if (!snapname) {
+		debug_sem("SNAP_NAME and SNAP_INSTANCE_NAME not set");
+	}
+	return snapname;
+}
+
+int rewrite_for_sem_open(const char *snapname, const char *name, char *rewritten,
+	    size_t rmax)
+{
+	if (strlen(snapname) + strlen(name) > MAX_SEM_NAME_SIZE) {
+		errno = ENAMETOOLONG;
+		return -1;
+	}
+
+	const char *tmp = name;
+	if (tmp[0] == '/') {
+		// If specified with leading '/', just strip it to avoid
+		// having to mkdir(), etc
+		tmp = &name[1];
+	}
+
+	int n = snprintf(rewritten, rmax, "snap.%s.%s", snapname, tmp);
+	if (n < 0 || n >= rmax) {
+		fprintf(stderr, "snprintf truncated\n");
+		return -1;
+	}
+	rewritten[rmax-1] = '\0';
+
+	return 0;
+}
+
+extern "C" sem_t
+*sem_open(const char *name, int oflag, ...)
+{
+	mode_t mode;
+	unsigned int value;
+
+	debug_sem("sem_open()");
+	debug_sem("requested name: %s", name);
+
+	// lookup the libc's sem_open() if we haven't already
+	if (!original_sem_open) {
+		dlerror();
+		original_sem_open = (sem_t*(*)(const char *, int, ...)) dlsym(RTLD_NEXT, "sem_open");
+		if (!original_sem_open) {
+			debug_sem("could not find sem_open in libc");
+			return SEM_FAILED;
+		}
+		dlerror();
+	}
+
+	// mode and value must be set with O_CREAT
+	va_list argp;
+	va_start(argp, oflag);
+	if (oflag & O_CREAT) {
+		mode = va_arg(argp, mode_t);
+		value = va_arg(argp, unsigned int);
+		if (value > SEM_VALUE_MAX) {
+			errno = EINVAL;
+			return SEM_FAILED;
+		}
+	}
+	va_end(argp);
+
+	const char *snapname = get_snap_name();
+
+	// just call libc's sem_open() if snapname not set
+	if (!snapname) {
+		if (oflag & O_CREAT) {
+			return original_sem_open(name, oflag, mode, value);
+		}
+		return original_sem_open(name, oflag);
+	}
+
+	// Format the rewritten name
+	char rewritten[MAX_SEM_NAME_SIZE+1];
+	if (rewrite_for_sem_open(snapname, name, rewritten, MAX_SEM_NAME_SIZE + 1) != 0) {
+		return SEM_FAILED;
+	}
+	debug_sem("rewritten name: %s", rewritten);
+
+	if (oflag & O_CREAT) {
+		// glibc's sem_open with O_CREAT will create a file in /dev/shm
+		// by creating a tempfile, initializing it, hardlinking it and
+		// unlinking the tempfile. We:
+		// 1. create a temporary file in /dev/shm with rewritten path
+		//    as the template and the specified mode
+		// 2. initialize a sem_t with sem_init
+		// 3. write the initialized sem_t to the temporary file using
+		//    sem_open()s declared value. We used '1' for pshared since
+		//    that is how glibc sets up a named semaphore
+		// 4. close the temporary file
+		// 5. hard link the temporary file to the rewritten path. If
+		//    O_EXCL is not specified, ignore EEXIST and just cleanup
+		//    as per documented behavior in 'man sem_open'. If O_EXCL
+		//    is specified and file exists, exit with error. If link is
+		//    successful, cleanup.
+		// 6. call glibc's sem_open() without O_CREAT|O_EXCL
+		//
+		// See glibc's fbtl/sem_open.c for more details
+
+		// First, calculate the requested path
+		char path[PATH_MAX] = { 0 };
+		// /sem. + '\0' = 6
+		int max_path_size = strlen(SHM_DIR) + strlen(rewritten) + 6;
+		if (max_path_size >= PATH_MAX) {
+			// Should never happen since PATH_MAX should be much
+			// larger than NAME_MAX, but be defensive.
+			errno = ENAMETOOLONG;
+			return SEM_FAILED;
+		}
+		int n = snprintf(path, max_path_size, "%s/sem.%s", SHM_DIR,
+				 rewritten);
+		if (n < 0 || n >= max_path_size) {
+			errno = ENAMETOOLONG;
+			return SEM_FAILED;
+		}
+		path[max_path_size-1] = '\0';
+
+		// Then calculate the template path
+		char tmp[PATH_MAX] = { 0 };
+		n = snprintf(tmp, PATH_MAX, "%s/%s.XXXXXX", SHM_DIR,
+			     rewritten);
+		if (n < 0 || n >= PATH_MAX) {
+			errno = ENAMETOOLONG;
+			return SEM_FAILED;
+		}
+		tmp[PATH_MAX-1] = '\0';
+
+		// Next, create a temporary file
+		int fd = mkstemp(tmp);
+		if (fd < 0) {
+			return SEM_FAILED;
+		}
+		debug_sem("tmp name: %s", tmp);
+
+		// Update the temporary file to have the requested mode
+		if (fchmod(fd, mode) < 0) {
+			close(fd);
+			unlink(tmp);
+			return SEM_FAILED;
+		}
+
+		// Then write out an empty semaphore and set the initial value.
+		// We use '1' for pshared since that is how glibc sets up the
+		// semaphore (see glibc's fbtl/sem_open.c)
+		sem_t initsem;
+		sem_init(&initsem, 1, value);
+		if (write(fd, &initsem, sizeof(sem_t)) < 0) {
+			close(fd);
+			unlink(tmp);
+			return SEM_FAILED;
+		}
+		close(fd);
+
+		// Then link the file into place. If the target exists and
+		// O_EXCL was not specified, just cleanup and proceed to open
+		// the existing file as per documented behavior in 'man
+		// sem_open'.
+		int existed = 0;
+		if (link(tmp, path) < 0) {
+			if (oflag & O_EXCL || errno != EEXIST) {
+				unlink(tmp);
+				return SEM_FAILED;
+			}
+			existed = 1;
+		}
+		unlink(tmp);
+
+		// Then call sem_open() on the created file, stripping out the
+		// O_CREAT|O_EXCL since we just created it
+		sem_t *sem = original_sem_open(rewritten,
+					       oflag & ~(O_CREAT | O_EXCL));
+		if (sem == SEM_FAILED) {
+			if (!existed) {
+				unlink(path);
+			}
+			return SEM_FAILED;
+		}
+
+		return sem;
+	} else {
+		// without O_CREAT, just call sem_open with rewritten
+		return original_sem_open(rewritten, oflag);
+	}
+
+	return SEM_FAILED;
+}
+
+// sem_unlink
+extern "C" int
+sem_unlink(const char *name)
+{
+	debug_sem("sem_unlink()");
+	debug_sem("requested name: %s", name);
+
+	// lookup the libc's sem_unlink() if we haven't already
+	if (!original_sem_unlink) {
+		dlerror();
+		original_sem_unlink = (int(*)(const char *))dlsym(RTLD_NEXT, "sem_unlink");
+		if (!original_sem_unlink) {
+			debug_sem("could not find sem_unlink in libc");
+			return -1;
+		}
+		dlerror();
+	}
+
+	const char *snapname = get_snap_name();
+
+	// just call libc's sem_unlink() if snapname not set
+	if (!snapname) {
+		return original_sem_unlink(name);
+	}
+
+	// Format the rewritten name
+	char rewritten[MAX_SEM_NAME_SIZE+1];
+	if (rewrite_for_sem_open(snapname, name, rewritten, MAX_SEM_NAME_SIZE + 1) != 0) {
+		return -1;
+	}
+	debug_sem("rewritten name: %s", rewritten);
+
+	return original_sem_unlink(rewritten);
 }
