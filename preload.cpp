@@ -100,12 +100,12 @@ str_starts_with(const std::string& str, std::string const& prefix)
 }
 
 inline bool
-str_ends_with(const std::string& str, std::string const& sufix)
+str_ends_with(const std::string& str, std::string const& suffix)
 {
-    if (str.size () < sufix.size ())
+    if (str.size () < suffix.size ())
         return false;
 
-    return str.compare (str.size() - sufix.size (), sufix.size (), sufix) == 0;
+    return str.compare (str.size() - suffix.size (), suffix.size (), suffix) == 0;
 }
 
 struct Initializer { Initializer (); };
