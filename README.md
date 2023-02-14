@@ -7,6 +7,8 @@ parts:
     snapcraft-preload:
         source: https://github.com/sergiusens/snapcraft-preload.git
         plugin: cmake
+        cmake-parameters:
+          - -DCMAKE_INSTALL_PREFIX=/
         build-packages:
           - on amd64:
             - gcc-multilib
