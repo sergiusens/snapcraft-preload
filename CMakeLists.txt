@@ -26,7 +26,7 @@ set(LIBNAME "lib${SNAPCRAFT_PRELOAD}")
 set(LIBPATH "lib")
 add_library(${SNAPCRAFT_PRELOAD} SHARED preload.cpp)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14 -pthread -lpthread -Wl,--no-as-needed")
 
 set_target_properties(${SNAPCRAFT_PRELOAD} PROPERTIES
                       COMPILE_FLAGS "-DSNAPCRAFT_LIBNAME_DEF=\\\"${LIBNAME}.so\\\"")
